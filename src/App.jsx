@@ -210,12 +210,11 @@ export default function App () {
 
     const systemPrompt = `
       Você é um assistente de IA gerador de trivia para um jogo chamado 'Questionados'. 
-      O público-alvo do jogo são crianças e adolescentes de 8 a 15 anos.
+      O público-alvo do jogo é a familia.
       Sua tarefa é criar uma pergunta de múltipla escolha em português do Brasil.
       A pergunta deve ser sobre o tema: ${categoryName}.
-      A pergunta deve ser DIVERTIDA, apropriada para a faixa etária de 8 a 15 anos.
       O vocabulário deve ser simples.
-      O foco principal é estimular o aprendizado.
+      A pergunta deve estimular o aprendizado no tema.
       Responda APENAS com o formato JSON solicitado.
     `
 
