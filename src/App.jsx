@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 // --- Configuração das Categorias ---
-var lastQuestions = [];
+var lastQuestions = []
 const categories = [
   {
     id: 'art',
@@ -201,6 +201,7 @@ export default function App () {
   }
 
   // --- Lógica da API Gemini (ATUALIZADA) ---
+  // --- Lógica da API Gemini (ATUALIZADA com Retry) ---
   const fetchQuestion = async categoryName => {
     if (!genAI) {
       setError('Cliente GenAI não inicializado. Verifique a API Key.')
@@ -208,7 +209,7 @@ export default function App () {
       return
     }
 
-    // Instrução do sistema
+    // --- Configurações (mesmas de antes) ---
     const systemInstruction = {
       role: 'system',
       parts: [
@@ -221,56 +222,81 @@ export default function App () {
           O vocabulário deve ser simples.
           A pergunta deve estimular o aprendizado no tema.
           Responda APENAS com o formato JSON solicitado.
-          Evite perguntas que já foram feitas recentemente: ${lastQuestions.join('; ')}
+          Evite perguntas similares às anteriores listadas: ${lastQuestions.join(
+            ', '
+          )}.
         `.trim()
         }
       ]
     }
-
-    // Configuração de geração (para forçar JSON)
     const generationConfig = {
       responseMimeType: 'application/json',
       responseSchema: geminiSchema
     }
-
-    // Prompt do usuário
     const userQuery = `
       Gere uma pergunta sobre ${categoryName}.
       As 4 alternativas devem ser curtas (uma ou duas palavras se possível).
       A "respostaCorreta" deve ser o texto exato de uma das alternativas.
     `.trim()
+    // --- Fim Configurações ---
 
-    try {
-      // *** ESTA É A LINHA CORRIGIDA ***
-      // Usando o nome do modelo EXATO do seu código original
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.5-flash',
-        systemInstruction: systemInstruction
-      })
+    // *** INÍCIO DA LÓGICA DE RETRY ***
+    const MAX_RETRIES = 3
+    let delay = 1000 // Começa com 1 segundo de espera
 
-      // Chamada da SDK
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
-        generationConfig: generationConfig
-      })
+    for (let i = 0; i < MAX_RETRIES; i++) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.5-flash',
+          systemInstruction: systemInstruction
+        })
 
-      const response = result.response
-      const jsonText = response.text()
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+          generationConfig: generationConfig
+        })
 
-      lastQuestions.push(jsonText);
+        const response = result.response
+        const jsonText = response.text()
 
-      if (!jsonText) {
-        throw new Error('Resposta da API em formato inesperado.')
+        if (!jsonText) {
+          throw new Error('Resposta da API em formato inesperado.')
+        }
+
+        const parsedQuestion = JSON.parse(jsonText)
+        setCurrentQuestion(parsedQuestion)
+        setGameState('question')
+
+        // SUCESSO! Sai da função.
+        return
+      } catch (err) {
+        console.warn(
+          `Tentativa ${i + 1} de ${MAX_RETRIES} falhou:`,
+          err.message
+        )
+
+        // Verifica se é um erro '503' (sobrecarregado) e se ainda não atingiu o limite de tentativas
+        const isOverloaded = err.message && err.message.includes('503')
+
+        if (isOverloaded && i < MAX_RETRIES - 1) {
+          // É um erro 503, vamos esperar e tentar de novo
+          const jitter = Math.random() * 500 // Adiciona um "jitter" para não sobrecarregar
+          await new Promise(resolve => setTimeout(resolve, delay + jitter))
+          delay *= 2 // Dobra o tempo de espera (exponential backoff)
+        } else {
+          // É um erro diferente ou atingimos o limite de tentativas
+          console.error('Erro final ao buscar pergunta:', err)
+          setError(
+            `Falha ao buscar pergunta. Tente novamente. (${err.message})`
+          )
+          setGameState('idle')
+
+          // FALHA! Sai da função.
+          return
+        }
       }
-
-      const parsedQuestion = JSON.parse(jsonText)
-      setCurrentQuestion(parsedQuestion)
-      setGameState('question')
-    } catch (err) {
-      console.error('Erro ao buscar pergunta:', err)
-      setError(`Falha ao buscar pergunta. Tente novamente. (${err.message})`)
-      setGameState('idle')
     }
+    // *** FIM DA LÓGICA DE RETRY ***
   }
 
   // --- Lógica de Resposta ---
