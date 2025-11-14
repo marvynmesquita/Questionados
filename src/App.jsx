@@ -387,11 +387,11 @@ export default function App () {
             </p>
           )}
           <button
-            onClick={playAgain}
+            onClick={spinWheel}
             className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
                        text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
           >
-            Jogar Novamente
+            Questionar Novamente!
           </button>
         </div>
       )
@@ -435,12 +435,12 @@ export default function App () {
           <button
             onClick={spinWheel}
             disabled={!!error} // Desabilita se houver erro na API key
-            className='w-48 h-48 bg-white text-gray-800 rounded-full
+            className='w-56 h-56 bg-white text-gray-800 rounded-full
                        text-3xl font-bold shadow-xl
                        hover:scale-105 active:scale-95 transition-transform
                        disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
           >
-            SORTEAR!
+            QUESTIONAR!
           </button>
         </div>
       )
