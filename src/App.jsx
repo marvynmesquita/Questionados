@@ -134,7 +134,7 @@ export default function App () {
   const rawApiKey =
     typeof process !== 'undefined'
       ? process.env.REACT_APP_GEMINI_API_KEY
-      : 'AIzaSyDPLQmTk2mGnN7TJv7keydv0Rt3MR66JNA'
+      : untitled
 
   // Usa um estado para armazenar a chave validada
   const [apiKey, setApiKey] = useState(undefined)
