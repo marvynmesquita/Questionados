@@ -213,8 +213,8 @@ export default function App () {
       O público-alvo do jogo são crianças e adolescentes de 8 a 15 anos.
       Sua tarefa é criar uma pergunta de múltipla escolha em português do Brasil.
       A pergunta deve ser sobre o tema: ${categoryName}.
-      A pergunta deve ser FÁCIL, MEDIANA ou DIFICIL e DIVERTIDA, apropriada para a faixa etária de 8 a 15 anos.
-      O vocabulário deve ser simples. Evite perguntas muito específicas ou complexas.
+      A pergunta deve ser FÁCIL, MEDIANA ou DIFICIL porém DIVERTIDA, apropriada para a faixa etária de 8 a 15 anos.
+      O vocabulário deve ser simples.
       Responda APENAS com o formato JSON solicitado.
     `
 
