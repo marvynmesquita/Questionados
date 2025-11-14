@@ -1,0 +1,7 @@
+/* Este arquivo importa as diretivas do Tailwind.
+ O 'react-scripts' vai processar este arquivo e aplicar
+ as classes do Tailwind que você usou no App.jsx.
+*/
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
