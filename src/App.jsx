@@ -2,6 +2,17 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 // Importa a biblioteca
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
+// NOVO: Importar Font Awesome
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import {
+  faPalette,
+  faFlask,
+  faFutbol,
+  faGlobe,
+  faTicket,
+  faLandmark
+} from '@fortawesome/free-solid-svg-icons'
+
 // --- Configuração das Categorias ---
 var lastQuestions = []
 const categories = [
@@ -9,95 +20,42 @@ const categories = [
     id: 'art',
     name: 'Arte',
     color: 'bg-red-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zM12 4c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zM7 12c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm10 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-5 4c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z' />
-      </svg>
-    )
+    icon: faPalette // MUDANÇA: Substituído SVG por ícone
   },
   {
     id: 'science',
     name: 'Ciência',
     color: 'bg-green-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M11 2v5.33l-4 4L3 8V5c0-1.1.9-2 2-2h6zm10 3v3l-4 3 4 4v3h-6c-1.1 0-2-.9-2-2v-3.33l-4-4 4-4V5c0-1.1.9-2 2-2h6zM5 10v9h6c1.1 0 2-.9 2-2v-3.33l-4-4L5 10z' />
-      </svg>
-    )
+    icon: faFlask // MUDANÇA: Substituído SVG por ícone
   },
   {
     id: 'sports',
     name: 'Esporte',
     color: 'bg-blue-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v2h-2V7zm0 4h2v6h-2v-6z' />
-      </svg>
-    )
+    icon: faFutbol // MUDANÇA: Substituído SVG por ícone
   },
   {
     id: 'geography',
     name: 'Geografia',
     color: 'bg-yellow-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z' />
-      </svg>
-    )
+    icon: faGlobe // MUDANÇA: Substituído SVG por ícone
   },
   {
     id: 'entertainment',
     name: 'Entretenimento',
     color: 'bg-pink-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-2-9h4v2h-4v-2zm-4 4h12v2H6v-2zm4-8h4v2h-4V7z' />
-      </svg>
-    )
+    icon: faTicket // MUDANÇA: Substituído SVG por ícone
   },
   {
     id: 'history',
     name: 'História',
     color: 'bg-purple-500',
-    icon: props => (
-      <svg
-        {...props}
-        xmlns='http://www.w3.org/2000/svg'
-        viewBox='0 0 24 24'
-        fill='currentColor'
-      >
-        <path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v5h-2V7zm0 6h2v2h-2v-2z' />
-      </svg>
-    )
+    icon: faLandmark // MUDANÇA: Substituído SVG por ícone
   }
 ]
 
 // --- Schema de Resposta da API Gemini ---
+// (Todo o restante do código permanece o mesmo)
 const geminiSchema = {
   type: 'OBJECT',
   properties: {
@@ -200,7 +158,6 @@ export default function App () {
     }, spinDuration)
   }
 
-  // --- Lógica da API Gemini (ATUALIZADA) ---
   // --- Lógica da API Gemini (ATUALIZADA com Retry) ---
   const fetchQuestion = async categoryName => {
     if (!genAI) {
@@ -287,6 +244,14 @@ export default function App () {
         }
 
         const parsedQuestion = JSON.parse(jsonText)
+
+        // Adiciona a pergunta à lista de perguntas anteriores
+        lastQuestions.push(parsedQuestion.pergunta)
+        // Limita o histórico para as últimas 20 perguntas
+        if (lastQuestions.length > 20) {
+          lastQuestions.shift()
+        }
+
         setCurrentQuestion(parsedQuestion)
         setGameState('question')
 
@@ -373,7 +338,11 @@ export default function App () {
             key={category.id}
             className={`flex flex-col items-center p-2 rounded-lg ${category.color} ${highlightClass} transition-all duration-150 transform-gpu`}
           >
-            <category.icon className='w-6 h-6 sm:w-8 sm:h-8 text-white' />
+            {/* MUDANÇA AQUI: Usa o componente FontAwesomeIcon */}
+            <FontAwesomeIcon
+              icon={category.icon}
+              className='w-6 h-6 sm:w-8 sm:h-8 text-white'
+            />
             <span className='text-white font-semibold text-xs sm:text-sm mt-1'>
               {category.name}
             </span>
@@ -486,7 +455,7 @@ export default function App () {
             ></path>
           </svg>
           <h3 className='text-2xl font-bold text-white animate-pulse mt-4'>
-            Sorteando Categoria...
+            Gerando questão...
           </h3>
         </div>
       )
