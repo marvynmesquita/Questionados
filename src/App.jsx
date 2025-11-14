@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
+// Importa a biblioteca
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
 // --- Configuração das Categorias ---
-// Define as categorias, cores e ícones (SVGs inline para simplicidade)
+var lastQuestions = [];
 const categories = [
   {
     id: 'art',
@@ -96,7 +98,6 @@ const categories = [
 ]
 
 // --- Schema de Resposta da API Gemini ---
-// Define a estrutura JSON que esperamos da API
 const geminiSchema = {
   type: 'OBJECT',
   properties: {
@@ -120,23 +121,19 @@ export default function App () {
     entertainment: 0,
     history: 0
   })
-  const [spinningIndex, setSpinningIndex] = useState(null) // Index (0-5) da categoria destacada durante o "giro"
-  const [selectedCategory, setSelectedCategory] = useState(null) // Categoria sorteada
-  const [currentQuestion, setCurrentQuestion] = useState(null) // {pergunta, alternativas, respostaCorreta}
-  const [result, setResult] = useState(null) // 'correct' ou 'incorrect'
-  const [gameState, setGameState] = useState('idle') // 'idle', 'spinning', 'question', 'result'
+  const [spinningIndex, setSpinningIndex] = useState(null)
+  const [selectedCategory, setSelectedCategory] = useState(null)
+  const [currentQuestion, setCurrentQuestion] = useState(null)
+  const [result, setResult] = useState(null)
+  const [gameState, setGameState] = useState('idle')
   const [error, setError] = useState(null)
 
-  // Referência para o timer do "giro"
   const spinIntervalRef = useRef(null)
 
-  // Tenta ler a API key do 'process.env' (para Vercel/Render/CRA)
+  // --- Configuração da API Key ---
   const rawApiKey = process.env.REACT_APP_GEMINI_API_KEY
-
-  // Usa um estado para armazenar a chave validada
   const [apiKey, setApiKey] = useState(undefined)
 
-  // Efeito para validar a chave da API na inicialização
   useEffect(() => {
     if (!rawApiKey || rawApiKey === 'undefined') {
       setError(
@@ -149,6 +146,14 @@ export default function App () {
     }
   }, [rawApiKey])
 
+  // Instanciar o cliente GenAI
+  const genAI = useMemo(() => {
+    if (apiKey) {
+      return new GoogleGenerativeAI(apiKey)
+    }
+    return null
+  }, [apiKey])
+
   // Limpa o intervalo se o componente for desmontado
   useEffect(() => {
     return () => {
@@ -160,7 +165,7 @@ export default function App () {
 
   // --- Lógica Principal: "Girar" as Categorias ---
   const spinWheel = () => {
-    if (!apiKey) {
+    if (!genAI) {
       setError(
         'A chave da API Gemini não está configurada. Verifique o arquivo .env.local.'
       )
@@ -171,84 +176,89 @@ export default function App () {
     setCurrentQuestion(null)
     setResult(null)
     setError(null)
-    setSelectedCategory(null) // Limpa a seleção final anterior
+    setSelectedCategory(null)
 
-    const spinDuration = 4000 // Duração total do "giro" (4 segundos)
-    const spinInterval = 100 // Velocidade da troca de destaque (100ms)
+    const spinDuration = 4000
+    const spinInterval = 100
     let currentSpinIndex = 0
 
-    // Inicia o intervalo para animar o "spinningIndex"
     spinIntervalRef.current = setInterval(() => {
       setSpinningIndex(currentSpinIndex % categories.length)
       currentSpinIndex++
     }, spinInterval)
 
-    // Define um timeout para parar o "giro" após 4 segundos
     setTimeout(() => {
-      clearInterval(spinIntervalRef.current) // Para a animação
+      clearInterval(spinIntervalRef.current)
 
-      // Sorteia a categoria final
       const finalCategoryIndex = Math.floor(Math.random() * categories.length)
       const finalCategory = categories[finalCategoryIndex]
 
-      setSelectedCategory(finalCategory) // Define a categoria final
-      setSpinningIndex(finalCategoryIndex) // Mantém o destaque na categoria final
+      setSelectedCategory(finalCategory)
+      setSpinningIndex(finalCategoryIndex)
 
-      fetchQuestion(finalCategory.name) // Busca a pergunta
+      fetchQuestion(finalCategory.name)
     }, spinDuration)
   }
 
-  // --- Lógica da API Gemini ---
+  // --- Lógica da API Gemini (ATUALIZADA) ---
   const fetchQuestion = async categoryName => {
-    if (!apiKey) {
-      setError('Chave da API não encontrada durante a busca.')
+    if (!genAI) {
+      setError('Cliente GenAI não inicializado. Verifique a API Key.')
       setGameState('idle')
       return
     }
 
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`
+    // Instrução do sistema
+    const systemInstruction = {
+      role: 'system',
+      parts: [
+        {
+          text: `
+          Você é um assistente de IA gerador de trivia para um jogo chamado 'Questionados'.
+          O público-alvo do jogo é a familia.
+          Sua tarefa é criar uma pergunta de múltipla escolha em português do Brasil.
+          A pergunta deve ser sobre o tema: ${categoryName}.
+          O vocabulário deve ser simples.
+          A pergunta deve estimular o aprendizado no tema.
+          Responda APENAS com o formato JSON solicitado.
+          Evite perguntas que já foram feitas recentemente: ${lastQuestions.join('; ')}
+        `.trim()
+        }
+      ]
+    }
 
-    const systemPrompt = `
-      Você é um assistente de IA gerador de trivia para um jogo chamado 'Questionados'. 
-      O público-alvo do jogo é a familia.
-      Sua tarefa é criar uma pergunta de múltipla escolha em português do Brasil.
-      A pergunta deve ser sobre o tema: ${categoryName}.
-      O vocabulário deve ser simples.
-      A pergunta deve estimular o aprendizado no tema.
-      Responda APENAS com o formato JSON solicitado.
-    `
+    // Configuração de geração (para forçar JSON)
+    const generationConfig = {
+      responseMimeType: 'application/json',
+      responseSchema: geminiSchema
+    }
 
+    // Prompt do usuário
     const userQuery = `
       Gere uma pergunta sobre ${categoryName}.
       As 4 alternativas devem ser curtas (uma ou duas palavras se possível).
       A "respostaCorreta" deve ser o texto exato de uma das alternativas.
-    `
-
-    const payload = {
-      contents: [{ parts: [{ text: userQuery }] }],
-      systemInstruction: {
-        parts: [{ text: systemPrompt }]
-      },
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: geminiSchema
-      }
-    }
+    `.trim()
 
     try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      // *** ESTA É A LINHA CORRIGIDA ***
+      // Usando o nome do modelo EXATO do seu código original
+      const model = genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash',
+        systemInstruction: systemInstruction
       })
 
-      if (!response.ok) {
-        throw new Error(`Erro da API: ${response.statusText}`)
-      }
+      // Chamada da SDK
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: userQuery }] }],
+        generationConfig: generationConfig
+      })
 
-      const result = await response.json()
+      const response = result.response
+      const jsonText = response.text()
 
-      const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text
+      lastQuestions.push(jsonText);
+
       if (!jsonText) {
         throw new Error('Resposta da API em formato inesperado.')
       }
@@ -286,28 +296,27 @@ export default function App () {
     setCurrentQuestion(null)
     setResult(null)
     setSelectedCategory(null)
-    setSpinningIndex(null) // Limpa o destaque do "giro"
+    setSpinningIndex(null)
+    setError(null) // Limpa o erro ao tentar novamente
   }
 
   // --- Componentes de Renderização ---
 
-  // Renderiza o Placar (Scoreboard) - AGORA COM ANIMAÇÃO
+  // Renderiza o Placar (Scoreboard)
   const renderScoreboard = () => (
     <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 p-2 rounded-lg bg-gray-900/50 shadow-inner'>
       {categories.map((category, index) => {
-        // Destaque final (permanece após o giro)
         const isSelected =
           selectedCategory &&
           selectedCategory.id === category.id &&
           (gameState === 'question' || gameState === 'result')
-        // Destaque da animação (pisca durante o giro)
         const isSpinning = gameState === 'spinning' && spinningIndex === index
 
-        let highlightClass = 'scale-100 opacity-70' // Padrão
+        let highlightClass = 'scale-100 opacity-70'
         if (isSelected) {
-          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-white/30' // Destaque final
+          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-white/30'
         } else if (isSpinning) {
-          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-blue-400/50' // Destaque do "giro"
+          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-blue-400/50'
         }
 
         return (
@@ -316,7 +325,6 @@ export default function App () {
             className={`flex flex-col items-center p-2 rounded-lg ${category.color} ${highlightClass} transition-all duration-150 transform-gpu`}
           >
             <category.icon className='w-6 h-6 sm:w-8 sm:h-8 text-white' />
-            {/* Texto da categoria (volta) */}
             <span className='text-white font-semibold text-xs sm:text-sm mt-1'>
               {category.name}
             </span>
@@ -331,19 +339,28 @@ export default function App () {
 
   // Renderiza a Tela de Pergunta/Resultado/Girar
   const renderCentralArea = () => {
-    // Se houver um erro, mostra a mensagem de erro
     if (error) {
       return (
-        <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-48 flex flex-col justify-center'>
-          <h3 className='text-xl font-bold text-white mb-2'>
-            Erro de Configuração
-          </h3>
+        <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-auto flex flex-col justify-center'>
+          <h3 className='text-xl font-bold text-white mb-2'>Erro</h3>
           <p className='text-red-100'>{error}</p>
+          {!apiKey ? (
+            <p className='text-red-100 mt-2'>
+              Verifique o .env.local e atualize a página.
+            </p>
+          ) : (
+            <button
+              onClick={playAgain} // Volta para a tela inicial para tentar girar de novo
+              className='w-full p-3 mt-4 bg-white text-gray-800 rounded-lg font-bold
+                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
+            >
+              Tentar Novamente
+            </button>
+          )}
         </div>
       )
     }
 
-    // Mostra a tela da Pergunta
     if (gameState === 'question' && currentQuestion) {
       return (
         <div className='w-full max-w-lg p-6 bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg'>
@@ -366,7 +383,6 @@ export default function App () {
       )
     }
 
-    // Mostra a tela de Resultado (Certo/Errado)
     if (gameState === 'result') {
       const isCorrect = result === 'correct'
       return (
@@ -387,7 +403,7 @@ export default function App () {
             </p>
           )}
           <button
-            onClick={spinWheel}
+            onClick={spinWheel} // Mudei de playAgain para spinWheel
             className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
                        text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
           >
@@ -397,7 +413,6 @@ export default function App () {
       )
     }
 
-    // Mostra "Girando..."
     if (gameState === 'spinning') {
       return (
         <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
@@ -428,13 +443,12 @@ export default function App () {
       )
     }
 
-    // Mostra o botão "GIRAR!" (Estado 'idle')
     if (gameState === 'idle') {
       return (
         <div className='w-full max-w-lg p-6 text-center h-48 flex items-center justify-center'>
           <button
             onClick={spinWheel}
-            disabled={!!error} // Desabilita se houver erro na API key
+            disabled={!genAI} // Desabilita se o cliente genAI não estiver pronto
             className='w-56 h-56 bg-white text-gray-800 rounded-full
                        text-3xl font-bold shadow-xl
                        hover:scale-105 active:scale-95 transition-transform
@@ -455,7 +469,6 @@ export default function App () {
       className='flex flex-col items-center justify-between min-h-screen w-full
                    bg-gradient-to-b from-gray-800 to-gray-900 text-white p-4 font-sans'
     >
-      {/* Cabeçalho e Placar */}
       <header className='w-full max-w-2xl mb-4'>
         <h1
           className='text-4xl font-extrabold text-center mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-pink-500'
@@ -466,12 +479,10 @@ export default function App () {
         {renderScoreboard()}
       </header>
 
-      {/* Corpo Principal (Área de Interação) */}
       <main className='flex flex-col items-center justify-center flex-grow w-full my-8'>
         {renderCentralArea()}
       </main>
 
-      {/* Rodapé */}
       <footer className='w-full text-center p-4 text-gray-500 text-sm'>
         Criado para fins educacionais.
       </footer>
