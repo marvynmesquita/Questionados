@@ -131,25 +131,19 @@ export default function App () {
   const spinIntervalRef = useRef(null)
 
   // Tenta ler a API key do 'process.env' (para Vercel/Render/CRA)
-  const rawApiKey =
-    typeof process !== 'undefined'
-      ? process.env.REACT_APP_GEMINI_API_KEY
-      : undefined
+  const rawApiKey = process.env.REACT_APP_GEMINI_API_KEY
 
   // Usa um estado para armazenar a chave validada
   const [apiKey, setApiKey] = useState(undefined)
 
   // Efeito para validar a chave da API na inicialização
   useEffect(() => {
-    console.log('Lendo process.env.REACT_APP_GEMINI_API_KEY (raw):', rawApiKey)
     if (!rawApiKey || rawApiKey === 'undefined') {
-      console.error('Chave da API não encontrada. Verifique o .env.local')
       setError(
         'A chave da API Gemini não está configurada. Verifique o arquivo .env.local.'
       )
       setApiKey(null)
     } else {
-      console.log('Chave da API carregada com sucesso.')
       setError(null)
       setApiKey(rawApiKey)
     }
@@ -170,7 +164,6 @@ export default function App () {
       setError(
         'A chave da API Gemini não está configurada. Verifique o arquivo .env.local.'
       )
-      console.error('Tentativa de girar sem API key.')
       return
     }
 
