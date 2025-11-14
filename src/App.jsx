@@ -209,26 +209,49 @@ export default function App () {
       return
     }
 
-    // --- Configurações (mesmas de antes) ---
+    // Instrução do sistema (Atualizada)
     const systemInstruction = {
       role: 'system',
       parts: [
         {
           text: `
-          Você é um assistente de IA gerador de trivia para um jogo chamado 'Questionados'.
-          O público-alvo do jogo é a familia.
-          Sua tarefa é criar uma pergunta de múltipla escolha em português do Brasil.
-          A pergunta deve ser sobre o tema: ${categoryName}.
-          O vocabulário deve ser simples.
-          A pergunta deve estimular o aprendizado no tema.
-          Responda APENAS com o formato JSON solicitado.
-          Evite perguntas similares às anteriores listadas: ${lastQuestions.join(
-            ', '
-          )}.
-        `.trim()
+        **Seu Papel:** Você é um assistente de IA altamente qualificado, especializado em criar perguntas de trivia para um jogo de família chamado 'Questionados'.
+
+        **Seu Objetivo:** Gerar UMA (1) pergunta de múltipla escolha em português do Brasil.
+
+        **Tema da Pergunta:** A pergunta deve ser estritamente sobre o tema: ${categoryName}.
+
+        **Público-Alvo:** Famílias (crianças e adultos).
+        * O vocabulário deve ser simples, claro e acessível para todas as idades.
+        * O tom deve ser amigável, divertido e estimulante.
+
+        **Qualidade da Pergunta:**
+        * A pergunta deve ser interessante e estimular a curiosidade e o aprendizado sobre o tema.
+        * Nível de dificuldade: Fácil a Médio. Evite perguntas excessivamente obscuras, técnicas ou que exijam conhecimento muito específico.
+        * Evite perguntas que possam ser respondidas com "Sim" ou "Não".
+
+        **Requisitos das Alternativas:**
+        * Forneça exatamente 4 alternativas de resposta.
+        * As alternativas devem ser CURTAS e diretas, de preferência com uma ou duas palavras (ex: "Paris", "Verde", "1990", "Cachorro").
+        * Apenas uma alternativa pode ser a correta.
+
+        **Requisito da Resposta Correta:**
+        * O valor do campo "respostaCorreta" deve ser o TEXTO EXATO de uma das 4 opções listadas em "alternativas". Esta é uma regra CRÍTICA para o funcionamento do jogo.
+
+        **Restrição de Repetição:**
+        * Gere uma pergunta nova e única. EVITE gerar perguntas idênticas ou muito similares às seguintes: ${lastQuestions.join(
+          ', '
+        )}.
+
+        **Formato de Saída OBRIGATÓRIO:**
+        * Responda APENAS com o objeto JSON.
+        * Não inclua NENHUM texto, explicação, introdução ou marcadores de formatação (como \`\`\`json) antes ou depois do objeto JSON.
+        * O JSON deve seguir este schema: { "pergunta": "...", "alternativas": ["...", "...", "...", "..."], "respostaCorreta": "..." }
+      `.trim()
         }
       ]
     }
+
     const generationConfig = {
       responseMimeType: 'application/json',
       responseSchema: geminiSchema
