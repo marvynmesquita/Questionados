@@ -271,8 +271,9 @@ export default function App () {
 
     const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a categoria: ${category.name}.
     Responda APENAS um JSON neste formato exato, sem markdown: 
-    {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta"}.
-    Idioma: Português do Brasil.`
+    {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta", "categoria": "${category.id}"}.
+    Idioma: Português do Brasil.
+    Não traduza a categoria.`
 
     try {
       const completion = await groqClient.chat.completions.create({
@@ -581,14 +582,14 @@ export default function App () {
                 <div
                   className={`${
                     categories.find(
-                      c => c.id === (gameData?.selectedCategory || 'art')
+                      c => c.id === (localQuestion.categoria || 'art')
                     )?.color || 'bg-gray-500'
                   } px-6 py-2 sm:px-8 sm:py-3 rounded-full shadow-lg flex items-center gap-2 sm:gap-3`}
                 >
                   <FontAwesomeIcon
                     icon={
                       categories.find(
-                        c => c.id === (gameData?.selectedCategory || 'art')
+                        c => c.id === (localQuestion.categoria || 'art')
                       )?.icon
                     }
                     className='text-sm sm:text-base'
@@ -596,7 +597,7 @@ export default function App () {
                   <span className='font-black uppercase tracking-wider text-xs sm:text-sm'>
                     {
                       categories.find(
-                        c => c.id === (gameData?.selectedCategory || 'art')
+                        c => c.id === (localQuestion.categoria || 'art')
                       )?.name
                     }
                   </span>
