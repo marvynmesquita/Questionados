@@ -6,8 +6,7 @@
     "@fortawesome/fontawesome-svg-core": "^7.1.0",
     "@fortawesome/free-solid-svg-icons": "^7.1.0",
     "@fortawesome/react-fontawesome": "^3.1.0",
-    "@google/genai": "^1.29.1",
-    "@google/generative-ai": "^0.24.1",
+    "groq-sdk": "^0.35.0",
     "lucide-react": "^0.407.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

@@ -1,8 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
-// Importa a biblioteca
-import { GoogleGenerativeAI } from '@google/generative-ai'
+// MUDANÇA 1: Importar Groq
+import Groq from 'groq-sdk'
 
-// NOVO: Importar Font Awesome
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPalette,
@@ -20,54 +19,39 @@ const categories = [
     id: 'art',
     name: 'Arte',
     color: 'bg-red-500',
-    icon: faPalette // MUDANÇA: Substituído SVG por ícone
+    icon: faPalette
   },
   {
     id: 'science',
     name: 'Ciência',
     color: 'bg-green-500',
-    icon: faFlask // MUDANÇA: Substituído SVG por ícone
+    icon: faFlask
   },
   {
     id: 'sports',
     name: 'Esporte',
     color: 'bg-blue-500',
-    icon: faFutbol // MUDANÇA: Substituído SVG por ícone
+    icon: faFutbol
   },
   {
     id: 'geography',
     name: 'Geografia',
     color: 'bg-yellow-500',
-    icon: faGlobe // MUDANÇA: Substituído SVG por ícone
+    icon: faGlobe
   },
   {
     id: 'entertainment',
     name: 'Entretenimento',
     color: 'bg-pink-500',
-    icon: faTicket // MUDANÇA: Substituído SVG por ícone
+    icon: faTicket
   },
   {
     id: 'history',
     name: 'História',
     color: 'bg-purple-500',
-    icon: faLandmark // MUDANÇA: Substituído SVG por ícone
+    icon: faLandmark
   }
 ]
-
-// --- Schema de Resposta da API Gemini ---
-// (Todo o restante do código permanece o mesmo)
-const geminiSchema = {
-  type: 'OBJECT',
-  properties: {
-    pergunta: { type: 'STRING' },
-    alternativas: {
-      type: 'ARRAY',
-      items: { type: 'STRING' }
-    },
-    respostaCorreta: { type: 'STRING' }
-  },
-  required: ['pergunta', 'alternativas', 'respostaCorreta']
-}
 
 export default function App () {
   // --- Estados do Jogo ---
@@ -89,13 +73,14 @@ export default function App () {
   const spinIntervalRef = useRef(null)
 
   // --- Configuração da API Key ---
-  const rawApiKey = process.env.REACT_APP_GEMINI_API_KEY
+  // MUDANÇA 2: Usar a variável de ambiente correta para Groq
+  const rawApiKey = process.env.REACT_APP_GROQ_API_KEY
   const [apiKey, setApiKey] = useState(undefined)
 
   useEffect(() => {
     if (!rawApiKey || rawApiKey === 'undefined') {
       setError(
-        'A chave da API Gemini não está configurada. Verifique o arquivo .env.local.'
+        'A chave da API Groq não está configurada. Verifique o ficheiro .env.local.'
       )
       setApiKey(null)
     } else {
@@ -104,15 +89,17 @@ export default function App () {
     }
   }, [rawApiKey])
 
-  // Instanciar o cliente GenAI
-  const genAI = useMemo(() => {
+  // MUDANÇA 3: Instanciar o cliente Groq
+  const groqClient = useMemo(() => {
     if (apiKey) {
-      return new GoogleGenerativeAI(apiKey)
+      return new Groq({
+        apiKey: apiKey,
+        dangerouslyAllowBrowser: true // Necessário para React client-side
+      })
     }
     return null
   }, [apiKey])
 
-  // Limpa o intervalo se o componente for desmontado
   useEffect(() => {
     return () => {
       if (spinIntervalRef.current) {
@@ -121,12 +108,9 @@ export default function App () {
     }
   }, [])
 
-  // --- Lógica Principal: "Girar" as Categorias ---
   const spinWheel = () => {
-    if (!genAI) {
-      setError(
-        'A chave da API Gemini não está configurada. Verifique o arquivo .env.local.'
-      )
+    if (!groqClient) {
+      setError('A chave da API não está configurada.')
       return
     }
 
@@ -136,7 +120,7 @@ export default function App () {
     setError(null)
     setSelectedCategory(null)
 
-    const spinDuration = 4000
+    const spinDuration = 3000 // Reduzi um pouco para ser mais rápido
     const spinInterval = 100
     let currentSpinIndex = 0
 
@@ -158,136 +142,84 @@ export default function App () {
     }, spinDuration)
   }
 
-  // --- Lógica da API Gemini (ATUALIZADA com Retry) ---
+  // --- Lógica da API Groq (MUDANÇA TOTAL AQUI) ---
   const fetchQuestion = async categoryName => {
-    if (!genAI) {
-      setError('Cliente GenAI não inicializado. Verifique a API Key.')
+    if (!groqClient) {
+      setError('Cliente Groq não inicializado.')
       setGameState('idle')
       return
     }
 
-    // Instrução do sistema (Atualizada)
-    const systemInstruction = {
-      role: 'system',
-      parts: [
-        {
-          text: `
-        **Seu Papel:** Você é um assistente de IA altamente qualificado, especializado em criar perguntas de trivia para um jogo de família chamado 'Questionados'.
-
-        **Seu Objetivo:** Gerar UMA (1) pergunta de múltipla escolha em português do Brasil.
-
-        **Tema da Pergunta:** A pergunta deve ser estritamente sobre o tema: ${categoryName}.
-
-        **Público-Alvo:** Famílias (crianças e adultos).
-        * O vocabulário deve ser simples, claro e acessível para todas as idades.
-        * O tom deve ser amigável, divertido e estimulante.
-
-        **Qualidade da Pergunta:**
-        * A pergunta deve ser interessante e estimular a curiosidade e o aprendizado sobre o tema.
-        * Nível de dificuldade: Fácil a Médio. Evite perguntas excessivamente obscuras, técnicas ou que exijam conhecimento muito específico.
-        * Evite perguntas que possam ser respondidas com "Sim" ou "Não".
-
-        **Requisitos das Alternativas:**
-        * Forneça exatamente 4 alternativas de resposta.
-        * As alternativas devem ser CURTAS e diretas, de preferência com uma ou duas palavras (ex: "Paris", "Verde", "1990", "Cachorro").
-        * Apenas uma alternativa pode ser a correta.
-
-        **Requisito da Resposta Correta:**
-        * O valor do campo "respostaCorreta" deve ser o TEXTO EXATO de uma das 4 opções listadas em "alternativas". Esta é uma regra CRÍTICA para o funcionamento do jogo.
-
-        **Restrição de Repetição:**
-        * Gere uma pergunta nova e única. EVITE gerar perguntas idênticas ou muito similares às seguintes: ${lastQuestions.join(
-          ', '
-        )}.
-
-        **Formato de Saída OBRIGATÓRIO:**
-        * Responda APENAS com o objeto JSON.
-        * Não inclua NENHUM texto, explicação, introdução ou marcadores de formatação (como \`\`\`json) antes ou depois do objeto JSON.
-        * O JSON deve seguir este schema: { "pergunta": "...", "alternativas": ["...", "...", "...", "..."], "respostaCorreta": "..." }
-      `.trim()
-        }
-      ]
-    }
-
-    const generationConfig = {
-      responseMimeType: 'application/json',
-      responseSchema: geminiSchema
-    }
-    const userQuery = `
-      Gere uma pergunta sobre ${categoryName}.
-      As 4 alternativas devem ser curtas (uma ou duas palavras se possível).
-      A "respostaCorreta" deve ser o texto exato de uma das alternativas.
+    // Instrução do sistema
+    const systemPrompt = `
+      **Seu Papel:** Você é um assistente de IA para um jogo de trivia chamado 'Questionados'.
+      **Formato de Saída:** Você DEVE responder APENAS com um JSON válido. Não escreva nada antes ou depois do JSON.
+      **Estrutura do JSON:**
+      {
+        "pergunta": "Texto da pergunta",
+        "alternativas": ["Opção 1", "Opção 2", "Opção 3", "Opção 4"],
+        "respostaCorreta": "Texto exato de uma das opções"
+      }
+      **Regras:**
+      1. A pergunta deve ser sobre: ${categoryName}.
+      2. Nível Fácil/Médio para famílias.
+      3. 4 alternativas curtas.
+      4. "respostaCorreta" deve ser idêntica a uma das alternativas.
+      5. Evite repetir estas perguntas: ${lastQuestions.slice(-10).join(', ')}.
+      6. Idioma: Português do Brasil.
     `.trim()
-    // --- Fim Configurações ---
 
-    // *** INÍCIO DA LÓGICA DE RETRY ***
     const MAX_RETRIES = 3
-    let delay = 1000 // Começa com 1 segundo de espera
 
     for (let i = 0; i < MAX_RETRIES; i++) {
       try {
-        const model = genAI.getGenerativeModel({
-          model: 'gemini-2.5-flash',
-          systemInstruction: systemInstruction
+        const completion = await groqClient.chat.completions.create({
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: `Gera uma pergunta sobre ${categoryName}.` }
+          ],
+          // MUDANÇA AQUI: Use o modelo mais recente suportado (Llama 3.3)
+          model: 'llama-3.1-8b-instant', 
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
         })
 
-        const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: userQuery }] }],
-          generationConfig: generationConfig
-        })
+        const jsonText = completion.choices[0]?.message?.content
 
-        const response = result.response
-        const jsonText = response.text()
-
-        if (!jsonText) {
-          throw new Error('Resposta da API em formato inesperado.')
-        }
+        if (!jsonText) throw new Error('Resposta vazia da API.')
 
         const parsedQuestion = JSON.parse(jsonText)
 
-        // Adiciona a pergunta à lista de perguntas anteriores
-        lastQuestions.push(parsedQuestion.pergunta)
-        // Limita o histórico para as últimas 20 perguntas
-        if (lastQuestions.length > 20) {
-          lastQuestions.shift()
+        // Validação básica
+        if (
+          !parsedQuestion.pergunta ||
+          !parsedQuestion.alternativas ||
+          !parsedQuestion.respostaCorreta
+        ) {
+          throw new Error('JSON inválido ou incompleto.')
         }
+
+        // Atualiza histórico
+        lastQuestions.push(parsedQuestion.pergunta)
+        if (lastQuestions.length > 20) lastQuestions.shift()
 
         setCurrentQuestion(parsedQuestion)
         setGameState('question')
-
-        // SUCESSO! Sai da função.
-        return
+        return // Sucesso
       } catch (err) {
-        console.warn(
-          `Tentativa ${i + 1} de ${MAX_RETRIES} falhou:`,
-          err.message
-        )
+        console.warn(`Tentativa ${i + 1} falhou:`, err)
 
-        // Verifica se é um erro '503' (sobrecarregado) e se ainda não atingiu o limite de tentativas
-        const isOverloaded = err.message && err.message.includes('503')
-
-        if (isOverloaded && i < MAX_RETRIES - 1) {
-          // É um erro 503, vamos esperar e tentar de novo
-          const jitter = Math.random() * 500 // Adiciona um "jitter" para não sobrecarregar
-          await new Promise(resolve => setTimeout(resolve, delay + jitter))
-          delay *= 2 // Dobra o tempo de espera (exponential backoff)
-        } else {
-          // É um erro diferente ou atingimos o limite de tentativas
-          console.error('Erro final ao buscar pergunta:', err)
-          setError(
-            `Falha ao buscar pergunta. Tente novamente. (${err.message})`
-          )
+        if (i === MAX_RETRIES - 1) {
+          setError('Não foi possível gerar a pergunta. Tente novamente.')
           setGameState('idle')
-
-          // FALHA! Sai da função.
-          return
+        } else {
+          // Pequena pausa antes de tentar de novo
+          await new Promise(resolve => setTimeout(resolve, 1000))
         }
       }
     }
-    // *** FIM DA LÓGICA DE RETRY ***
   }
 
-  // --- Lógica de Resposta ---
   const handleAnswer = answer => {
     if (gameState !== 'question') return
 
@@ -304,19 +236,7 @@ export default function App () {
     setGameState('result')
   }
 
-  // --- Lógica para Jogar Novamente ---
-  const playAgain = () => {
-    setGameState('idle')
-    setCurrentQuestion(null)
-    setResult(null)
-    setSelectedCategory(null)
-    setSpinningIndex(null)
-    setError(null) // Limpa o erro ao tentar novamente
-  }
-
-  // --- Componentes de Renderização ---
-
-  // Renderiza o Placar (Scoreboard)
+  // --- Renderização (Mantida igual, apenas ajustando chamadas) ---
   const renderScoreboard = () => (
     <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 p-2 rounded-lg bg-gray-900/50 shadow-inner'>
       {categories.map((category, index) => {
@@ -338,7 +258,6 @@ export default function App () {
             key={category.id}
             className={`flex flex-col items-center p-2 rounded-lg ${category.color} ${highlightClass} transition-all duration-150 transform-gpu`}
           >
-            {/* MUDANÇA AQUI: Usa o componente FontAwesomeIcon */}
             <FontAwesomeIcon
               icon={category.icon}
               className='w-6 h-6 sm:w-8 sm:h-8 text-white'
@@ -355,26 +274,22 @@ export default function App () {
     </div>
   )
 
-  // Renderiza a Tela de Pergunta/Resultado/Girar
   const renderCentralArea = () => {
     if (error) {
       return (
         <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-auto flex flex-col justify-center'>
           <h3 className='text-xl font-bold text-white mb-2'>Erro</h3>
           <p className='text-red-100'>{error}</p>
-          {!apiKey ? (
-            <p className='text-red-100 mt-2'>
-              Verifique o .env.local e atualize a página.
-            </p>
-          ) : (
-            <button
-              onClick={playAgain} // Volta para a tela inicial para tentar girar de novo
-              className='w-full p-3 mt-4 bg-white text-gray-800 rounded-lg font-bold
-                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-            >
-              Tentar Novamente
-            </button>
-          )}
+          <button
+            onClick={() => {
+              setError(null)
+              setGameState('idle')
+            }}
+            className='w-full p-3 mt-4 bg-white text-gray-800 rounded-lg font-bold
+                     text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
+          >
+            Tentar Novamente
+          </button>
         </div>
       )
     }
@@ -421,7 +336,7 @@ export default function App () {
             </p>
           )}
           <button
-            onClick={spinWheel} // Mudei de playAgain para spinWheel
+            onClick={spinWheel}
             className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
                        text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
           >
@@ -455,7 +370,7 @@ export default function App () {
             ></path>
           </svg>
           <h3 className='text-2xl font-bold text-white animate-pulse mt-4'>
-            Gerando questão...
+            Gerando questão com IA...
           </h3>
         </div>
       )
@@ -466,7 +381,7 @@ export default function App () {
         <div className='w-full max-w-lg p-6 text-center h-48 flex items-center justify-center'>
           <button
             onClick={spinWheel}
-            disabled={!genAI} // Desabilita se o cliente genAI não estiver pronto
+            disabled={!groqClient}
             className='w-56 h-56 bg-white text-gray-800 rounded-full
                        text-3xl font-bold shadow-xl
                        hover:scale-105 active:scale-95 transition-transform
@@ -481,7 +396,6 @@ export default function App () {
     return null
   }
 
-  // --- Renderização Principal do App ---
   return (
     <div
       className='flex flex-col items-center justify-between min-h-screen w-full
@@ -502,8 +416,9 @@ export default function App () {
       </main>
 
       <footer className='w-full text-center p-4 text-gray-500 text-sm'>
-        Criado para fins educacionais.
+        Criado para fins educacionais. Powered by Groq.
       </footer>
     </div>
   )
 }
+// --- FIM DO CÓDIGO ---
