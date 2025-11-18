@@ -1,10 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import Groq from 'groq-sdk'
-
-// MUDANÇA 1: Importar Firebase
 import { db, doc, getDoc, setDoc, onSnapshot, updateDoc } from './firebase'
-import { nanoid } from 'nanoid'
-
+import { customAlphabet } from 'nanoid' // MUDANÇA: Usar gerador personalizado
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPalette,
@@ -13,12 +10,12 @@ import {
   faGlobe,
   faTicket,
   faLandmark,
-  faUser,
   faUserGroup
 } from '@fortawesome/free-solid-svg-icons'
 
-// --- Configuração das Categorias ---
-// lastQuestions como objeto de histórico por categoria
+// Gerador de IDs limpos (apenas letras e números maiúsculos)
+const nanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
+
 const lastQuestions = {
   art: [],
   science: [],
@@ -27,48 +24,37 @@ const lastQuestions = {
   entertainment: [],
   history: []
 }
+
 const categories = [
-  {
-    id: 'art',
-    name: 'Arte',
-    color: 'bg-red-500',
-    icon: faPalette
-  },
-  {
-    id: 'science',
-    name: 'Ciência',
-    color: 'bg-green-500',
-    icon: faFlask
-  },
-  {
-    id: 'sports',
-    name: 'Esporte',
-    color: 'bg-blue-500',
-    icon: faFutbol
-  },
-  {
-    id: 'geography',
-    name: 'Geografia',
-    color: 'bg-yellow-500',
-    icon: faGlobe
-  },
+  { id: 'art', name: 'Arte', color: 'bg-red-500', icon: faPalette },
+  { id: 'science', name: 'Ciência', color: 'bg-green-500', icon: faFlask },
+  { id: 'sports', name: 'Esporte', color: 'bg-blue-500', icon: faFutbol },
+  { id: 'geography', name: 'Geografia', color: 'bg-yellow-500', icon: faGlobe },
   {
     id: 'entertainment',
     name: 'Entretenimento',
     color: 'bg-pink-500',
     icon: faTicket
   },
-  {
-    id: 'history',
-    name: 'História',
-    color: 'bg-purple-500',
-    icon: faLandmark
-  }
+  { id: 'history', name: 'História', color: 'bg-purple-500', icon: faLandmark }
 ]
 
 export default function App () {
-  // --- ESTADOS DO JOGO ---
-  const [scores, setScores] = useState({
+  // --- ESTADOS LOCAIS (UI) ---
+  const [playerName, setPlayerName] = useState('')
+  const [gameId, setGameId] = useState('')
+  const [isHost, setIsHost] = useState(false)
+  const [error, setError] = useState(null)
+
+  // --- ESTADO DO JOGO (Vindo do Firebase) ---
+  const [gameData, setGameData] = useState(null)
+
+  // Estados para animação e lógica local
+  const [spinningIndex, setSpinningIndex] = useState(null)
+  const [localGameState, setLocalGameState] = useState('versus-menu') // versus-menu, idle, waiting, spinning, question, result
+  const [localQuestion, setLocalQuestion] = useState(null)
+  const [localResult, setLocalResult] = useState(null)
+  const [soloScores, setSoloScores] = useState({
     art: 0,
     science: 0,
     sports: 0,
@@ -76,834 +62,582 @@ export default function App () {
     entertainment: 0,
     history: 0
   })
-  const [spinningIndex, setSpinningIndex] = useState(null)
-  const [selectedCategory, setSelectedCategory] = useState(null)
-  const [currentQuestion, setCurrentQuestion] = useState(null)
-  const [result, setResult] = useState(null)
-  const [gameState, setGameState] = useState('idle') // idle, spinning, question, result, versus-menu, waiting
-  const [error, setError] = useState(null)
-
-  // --- ESTADOS DO VERSUS ---
-  const [gameId, setGameId] = useState('') // ID da sala (Game Session)
-  const [isHost, setIsHost] = useState(false) // Indica se é o criador da sala
-  const [isPlayerOne, setIsPlayerOne] = useState(true) // Qual jogador sou (P1 ou P2)
-  const [playerName, setPlayerName] = useState('')
-  const [opponentName, setOpponentName] = useState(null)
-  const [playerScores, setPlayerScores] = useState({ player1: 0, player2: 0 })
-  const [lastSyncedQuestion, setLastSyncedQuestion] = useState(null)
-  const [lastSyncedResult, setLastSyncedResult] = useState(null)
 
   const spinIntervalRef = useRef(null)
 
-  // --- CONFIGURAÇÃO DA API KEY ---
+  // --- API KEY ---
   const rawApiKey = process.env.REACT_APP_GROQ_API_KEY
   const [apiKey, setApiKey] = useState(undefined)
 
   useEffect(() => {
     if (!rawApiKey || rawApiKey === 'undefined') {
-      setError(
-        'A chave da API Groq não está configurada. Verifique o ficheiro .env.local.'
-      )
       setApiKey(null)
     } else {
-      setError(null)
       setApiKey(rawApiKey)
     }
   }, [rawApiKey])
 
   const groqClient = useMemo(() => {
     if (apiKey) {
-      return new Groq({
-        apiKey: apiKey,
-        dangerouslyAllowBrowser: true
-      })
+      return new Groq({ apiKey: apiKey, dangerouslyAllowBrowser: true })
     }
     return null
   }, [apiKey])
 
   useEffect(() => {
     return () => {
-      if (spinIntervalRef.current) {
-        clearInterval(spinIntervalRef.current)
-      }
+      if (spinIntervalRef.current) clearInterval(spinIntervalRef.current)
     }
   }, [])
 
-  // --- FUNÇÕES FIREBASE ---
-
-  // 4.1. Sincronizar estado do jogo e pontuações
+  // --- SINCRONIZAÇÃO FIREBASE ---
+  // Este useEffect roda sempre que o gameId mudar para conectar na sala certa
   useEffect(() => {
     if (!gameId) return
 
-    const gameDocRef = doc(db, 'games', gameId)
+    // Limpeza do ID para garantir que não haja espaços
+    const cleanGameId = gameId.trim().toUpperCase()
+    const gameRef = doc(db, 'games', cleanGameId)
 
-    const unsubscribe = onSnapshot(gameDocRef, snapshot => {
-      if (snapshot.exists()) {
-        const gameData = snapshot.data()
+    console.log('Tentando conectar na sala:', cleanGameId)
 
-        // Sincronizar Pontuações
-        setPlayerScores({
-          player1: gameData.player1Score,
-          player2: gameData.player2Score
-        })
+    const unsubscribe = onSnapshot(
+      gameRef,
+      docSnap => {
+        if (docSnap.exists()) {
+          const data = docSnap.data()
+          console.log('Dados recebidos do Firebase:', data)
+          setGameData(data) // Salva TUDO que vem do banco
 
-        // Sincronizar oponente (se não for o host)
-        if (!isHost) {
-          setOpponentName(gameData.player1Name)
-        }
-
-        // Se for o host, atualizar o nome do oponente (P2)
-        if (isHost) {
-          setOpponentName(gameData.player2Name)
-        }
-
-        // Sincronizar Pergunta/Resultado
-        if (gameData.currentQuestion && gameData.currentQuestion.pergunta) {
-          if (gameData.currentQuestion.pergunta !== currentQuestion?.pergunta) {
-            setCurrentQuestion(gameData.currentQuestion)
-            setSelectedCategory(
-              categories.find(c => c.id === gameData.selectedCategory)
-            )
-            setGameState('question')
-            setResult(null) // Limpa o resultado anterior para a nova pergunta
-            setLastSyncedResult(null)
+          // Sincroniza Estados Globais apenas se não estivermos processando localmente
+          if (localGameState !== 'spinning') {
+            // Nova Pergunta
+            if (
+              data.currentQuestion &&
+              data.currentQuestion.pergunta !== localQuestion?.pergunta
+            ) {
+              setLocalQuestion(data.currentQuestion)
+              setLocalGameState('question')
+              setLocalResult(null)
+            }
+            // Resultado
+            else if (
+              data.lastResult &&
+              data.gameState === 'idle' &&
+              localGameState !== 'result'
+            ) {
+              setLocalResult(data.lastResult)
+              setLocalGameState('result')
+            }
+            // Estado Genérico (Waiting -> Idle, etc)
+            else if (
+              data.gameState !== localGameState &&
+              localGameState !== 'question' &&
+              localGameState !== 'result'
+            ) {
+              // Evita sobrescrever o estado se o usuário ainda está digitando nome (versus-menu)
+              if (localGameState !== 'versus-menu') {
+                setLocalGameState(data.gameState)
+              }
+            }
           }
-        } else if (gameData.lastResult) {
-          // Se não há pergunta, mas há resultado, mostre o resultado
-          setLastSyncedResult(gameData.lastResult)
-          setGameState('result')
-        } else if (!gameData.currentQuestion && !gameData.lastResult) {
-          setGameState(gameData.gameState)
+        } else {
+          // Se o documento sumiu e não estamos no menu, reseta
+          if (localGameState !== 'versus-menu') {
+            alert('A sala não existe ou foi encerrada.')
+            resetGame()
+          }
         }
-      } else {
-        // Se o documento não existe, a sessão foi terminada
-        // Apenas para convidados/jogadores que não são o host
-        if (!isHost && gameId) {
-          alert('A sessão do jogo terminou ou não foi encontrada.')
-          resetGame()
-        }
+      },
+      error => {
+        console.error('Erro no listener:', error)
+        setError('Erro de conexão com o banco de dados.')
       }
-    })
+    )
 
     return () => unsubscribe()
-  }, [gameId, isHost, currentQuestion])
+  }, [gameId, localGameState, localQuestion]) // Removi isHost para evitar re-renders desnecessários
 
-  // 4.2. Criar uma nova sala (Host)
+  // --- FUNÇÕES DO JOGO ---
+
   const createGame = async () => {
-    if (!playerName) {
-      setError('Por favor, digite seu nome.')
-      return
-    }
-
-    // Limpar o erro antes de tentar
+    if (!playerName) return setError('Digite seu nome')
     setError(null)
 
-    // Gera um ID de sala com 6 caracteres maiúsculos
-    const newGameId = nanoid(6).toUpperCase()
-    const gameRef = doc(db, 'games', newGameId)
-
-    const initialGameData = {
-      player1Name: playerName,
-      player1Score: 0,
-      player2Name: null,
-      player2Score: 0,
-      currentQuestion: null,
-      selectedCategory: null,
-      gameState: 'waiting' // Estado inicial: esperando jogador 2
-    }
+    const newId = nanoid() // Gera ID limpo
 
     try {
-      // Tenta criar o documento no Firestore
-      await setDoc(gameRef, initialGameData)
-
-      // Se for bem sucedido, atualiza o estado local
-      setGameId(newGameId)
+      await setDoc(doc(db, 'games', newId), {
+        player1Name: playerName,
+        player1Score: 0,
+        player2Name: null,
+        player2Score: 0,
+        gameState: 'waiting',
+        currentQuestion: null,
+        selectedCategory: null,
+        lastResult: null,
+        createdAt: new Date().toISOString()
+      })
+      setGameId(newId)
       setIsHost(true)
-      setIsPlayerOne(true)
-      setGameState('waiting')
-
-      console.log('Sala criada com sucesso:', newGameId)
+      setLocalGameState('waiting')
     } catch (e) {
-      console.error('Erro ao criar sala:', e)
-      // Exibe a mensagem de erro de permissão
-      setError(
-        `Falha ao criar sala. Firebase Erro: ${e.message}. Verifique as Regras do Firestore.`
-      )
+      console.error(e)
+      setError('Erro ao criar sala. Verifique permissões do Firestore.')
     }
   }
 
-  // 4.3. Juntar-se a uma sala (Guest)
   const joinGame = async () => {
-    if (!playerName || !gameId) {
-      setError('Por favor, digite seu nome e o ID da sala.')
-      return
-    }
-
-    const gameRef = doc(db, 'games', gameId)
-
+    if (!playerName || !gameId) return setError('Preencha nome e código')
     setError(null)
 
+    const cleanId = gameId.trim().toUpperCase()
+    const gameRef = doc(db, 'games', cleanId)
+
     try {
-      const docSnap = await getDoc(gameRef)
+      const snap = await getDoc(gameRef)
 
-      if (docSnap.exists() && !docSnap.data().player2Name) {
-        // Entra como Jogador 2
-        await updateDoc(gameRef, {
-          player2Name: playerName,
-          gameState: 'idle' // Jogo pronto para começar
-        })
+      if (snap.exists()) {
+        const data = snap.data()
 
-        setIsHost(false)
-        setIsPlayerOne(false)
-        setGameState('idle')
-        setOpponentName(docSnap.data().player1Name)
-      } else if (docSnap.exists() && docSnap.data().player2Name) {
-        setError('Sala cheia ou jogo em andamento.')
+        // Verifica se a sala já tem player 2
+        if (!data.player2Name) {
+          // TENTA Atualizar o banco PRIMEIRO
+          await updateDoc(gameRef, { player2Name: playerName })
+
+          // SÓ MUDAR O ESTADO LOCAL SE O AWAIT FUNCIONAR
+          setIsHost(false)
+          setLocalGameState('waiting')
+          console.log('Entrou na sala com sucesso!')
+        } else {
+          setError('Esta sala já está cheia.')
+        }
       } else {
-        setError('Sala de jogo não encontrada.')
+        setError('Sala não encontrada. Verifique o código.')
       }
     } catch (e) {
-      console.error('Erro ao entrar na sala:', e)
-      setError(`Falha ao entrar na sala. Tente novamente. Erro: ${e.message}`)
+      console.error('Erro no join:', e)
+      // Exibe alerta crítico se falhar ao escrever
+      alert(
+        `Erro ao entrar: ${e.message}. Verifique se as regras do Firestore permitem escrita.`
+      )
+      setError('Falha ao conectar na sala.')
     }
   }
 
-  // 4.4. Resetar (Limpar estados)
   const resetGame = () => {
-    // Se for o host, tenta apagar a sala no Firebase (melhoria futura)
-    if (isHost && gameId) {
-      // Adicione aqui a lógica para apagar o documento do jogo (opcional)
-      // deleteDoc(doc(db, 'games', gameId)).catch(console.error);
-    }
-
-    setScores({
-      art: 0,
-      science: 0,
-      sports: 0,
-      geography: 0,
-      entertainment: 0,
-      history: 0
-    })
     setGameId('')
-    setIsHost(false)
-    setIsPlayerOne(true)
+    setGameData(null)
     setPlayerName('')
-    setOpponentName(null)
-    setPlayerScores({ player1: 0, player2: 0 })
-    setGameState('versus-menu') // Volta para o menu versus
-    setCurrentQuestion(null)
-    setResult(null)
-    setSpinningIndex(null)
+    setIsHost(false)
+    setLocalGameState('versus-menu')
+    setLocalQuestion(null)
+    setLocalResult(null)
     setError(null)
-    setLastSyncedQuestion(null)
-    setLastSyncedResult(null)
   }
 
-  // --- LÓGICA PRINCIPAL (ADAPTADA) ---
+  const startRound = async () => {
+    if (!isHost) return
+    // Limpa resultados anteriores e muda estado
+    await updateDoc(doc(db, 'games', gameId), {
+      gameState: 'spinning',
+      lastResult: null
+    })
+    spinWheel()
+  }
 
   const spinWheel = async () => {
-    // Apenas o HOST pode girar a roleta
-    if (gameId && !isHost) {
-      setError('Apenas o host pode girar a roleta no modo versus.')
-      return
-    }
+    setLocalGameState('spinning')
+    setLocalResult(null)
+    setLocalQuestion(null)
 
-    if (!groqClient) {
-      setError('A chave da API Groq não está configurada.')
-      return
-    }
-
-    setGameState('spinning')
-    setCurrentQuestion(null)
-    setResult(null)
-    setError(null)
-    setSelectedCategory(null)
-
-    const spinDuration = 3000
-    const spinInterval = 100
-    let currentSpinIndex = 0
-
+    let currentSpin = 0
     spinIntervalRef.current = setInterval(() => {
-      setSpinningIndex(currentSpinIndex % categories.length)
-      currentSpinIndex++
-    }, spinInterval)
+      setSpinningIndex(currentSpin % categories.length)
+      currentSpin++
+    }, 100)
 
-    setTimeout(() => {
+    setTimeout(async () => {
       clearInterval(spinIntervalRef.current)
+      const finalIndex = Math.floor(Math.random() * categories.length)
+      const category = categories[finalIndex]
+      setSpinningIndex(finalIndex)
 
-      const finalCategoryIndex = Math.floor(Math.random() * categories.length)
-      const finalCategory = categories[finalCategoryIndex]
-
-      setSelectedCategory(finalCategory)
-      setSpinningIndex(finalCategoryIndex)
-
-      fetchQuestionAndDistribute(finalCategory.name)
-    }, spinDuration)
+      if (!gameId || isHost) {
+        await generateQuestion(category)
+      }
+    }, 3000)
   }
 
-  // --- DISTRIBUIÇÃO DA PERGUNTA PARA O FIREBASE ---
-  const fetchQuestionAndDistribute = async categoryName => {
-    const currentCategoryObj = categories.find(c => c.name === categoryName)
-    const categoryId = currentCategoryObj ? currentCategoryObj.id : 'art'
-    const categoryHistory = lastQuestions[categoryId] || []
+  const generateQuestion = async category => {
+    if (!groqClient) return
 
-    const systemPrompt = `
-      **Seu Papel:** Você é um assistente de IA para um jogo de trivia chamado 'Questionados'.
-      **Formato de Saída:** Você DEVE responder APENAS com um JSON válido. Não escreva nada antes ou depois do JSON.
-      **Estrutura do JSON:**
-      {
-        "pergunta": "Texto da pergunta",
-        "alternativas": ["Opção 1", "Opção 2", "Opção 3", "Opção 4"],
-        "respostaCorreta": "Texto exato de uma das opções"
-      }
-      **Regras:**
-      1. A pergunta deve ser sobre: ${categoryName}.
-      2. Nível Fácil/Médio para famílias.
-      3. 4 alternativas curtas.
-      4. "respostaCorreta" deve ser idêntica a uma das alternativas.
-      5. Evite repetir estas perguntas ou criar perguntas similares: ${categoryHistory.join(
-        ', '
-      )}.
-      6. Idioma: Português do Brasil.
-    `.trim()
+    const prompt = `Gere uma pergunta de trivia sobre ${category.name} em JSON formato: {"pergunta": "...", "alternativas": ["A", "B", "C", "D"], "respostaCorreta": "..."}. A resposta correta deve ser idêntica a uma das alternativas. Idioma: PT-BR.`
 
-    const MAX_RETRIES = 3
+    try {
+      const completion = await groqClient.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        model: 'llama-3.3-70b-versatile',
+        response_format: { type: 'json_object' }
+      })
 
-    for (let i = 0; i < MAX_RETRIES; i++) {
-      try {
-        const completion = await groqClient.chat.completions.create({
-          messages: [
-            { role: 'system', content: systemPrompt },
-            // CORREÇÃO: Adiciona a palavra JSON na mensagem do usuário para satisfazer a API
-            {
-              role: 'user',
-              content: `Gera uma pergunta sobre ${categoryName}. Retorne o resultado em formato JSON.`
-            }
-          ],
-          model: 'llama-3.3-70b-versatile',
-          temperature: 0.7,
-          response_format: { type: 'json_object' }
+      const content = JSON.parse(completion.choices[0]?.message?.content)
+
+      if (gameId) {
+        await updateDoc(doc(db, 'games', gameId), {
+          currentQuestion: content,
+          selectedCategory: category.id,
+          gameState: 'question'
         })
-
-        const jsonText = completion.choices[0]?.message?.content
-
-        if (!jsonText) throw new Error('Resposta vazia da API.')
-
-        const parsedQuestion = JSON.parse(jsonText)
-
-        if (
-          !parsedQuestion.pergunta ||
-          !parsedQuestion.alternativas ||
-          !parsedQuestion.respostaCorreta
-        ) {
-          throw new Error('JSON inválido ou incompleto.')
-        }
-
-        // Atualiza histórico localmente
-        if (lastQuestions[categoryId]) {
-          lastQuestions[categoryId].push(parsedQuestion.pergunta)
-          if (lastQuestions[categoryId].length > 20) {
-            lastQuestions[categoryId].shift()
-          }
-        }
-
-        // PASSO DE DISTRIBUIÇÃO
-        if (gameId) {
-          const gameRef = doc(db, 'games', gameId)
-          await updateDoc(gameRef, {
-            currentQuestion: parsedQuestion,
-            selectedCategory: categoryId,
-            gameState: 'question',
-            lastResult: null // Limpa o resultado anterior
-          })
-        } else {
-          setCurrentQuestion(parsedQuestion)
-          setGameState('question')
-        }
-
-        return
-      } catch (err) {
-        console.warn(`Tentativa ${i + 1} falhou:`, err)
-
-        if (i === MAX_RETRIES - 1) {
-          setError('Não foi possível gerar a pergunta. Tente novamente.')
-          setGameState(gameId ? 'idle' : 'idle')
-        } else {
-          await new Promise(resolve => setTimeout(resolve, 1000))
-        }
+      } else {
+        setLocalQuestion(content)
+        setLocalGameState('question')
       }
+    } catch (e) {
+      console.error(e)
+      setError('Erro na IA. Tente novamente.')
+      if (gameId)
+        await updateDoc(doc(db, 'games', gameId), { gameState: 'idle' })
+      else setLocalGameState('idle')
     }
   }
 
-  // --- LÓGICA DE RESPOSTA (ADAPTADA) ---
   const handleAnswer = async answer => {
-    if (gameState !== 'question' || !currentQuestion) return
-
-    const isCorrect = answer === currentQuestion.respostaCorreta
-    const categoryId = selectedCategory.id
+    if (!localQuestion) return
+    const isCorrect = answer === localQuestion.respostaCorreta
 
     if (gameId) {
-      // MODO VERSUS
-      const playerKey = isPlayerOne ? 'player1Score' : 'player2Score'
-      const newScore = isPlayerOne
-        ? playerScores.player1 + (isCorrect ? 1 : 0)
-        : playerScores.player2 + (isCorrect ? 1 : 0)
-
-      const gameRef = doc(db, 'games', gameId)
+      const myScoreField = isHost ? 'player1Score' : 'player2Score'
+      // Usa valor atual do banco ou 0
+      const currentScore = (gameData && gameData[myScoreField]) || 0
 
       try {
-        await updateDoc(gameRef, {
-          [playerKey]: newScore,
-          // Envia o resultado da resposta do jogador atual para o outro player sincronizar
+        await updateDoc(doc(db, 'games', gameId), {
+          [myScoreField]: currentScore + (isCorrect ? 1 : 0),
           lastResult: isCorrect ? 'correct' : 'incorrect',
-          // Volta para o estado idle, esperando o Host girar a roleta novamente.
           gameState: 'idle'
         })
       } catch (e) {
-        console.error('Erro ao atualizar score no Firebase:', e)
-        setError(
-          `Erro ao registrar resposta. Verifique as permissões do Firebase.`
-        )
+        console.error('Erro ao enviar resposta:', e)
       }
     } else {
-      // MODO SOLO
+      // Solo
       if (isCorrect) {
-        setResult('correct')
-        setScores(prevScores => ({
-          ...prevScores,
-          [categoryId]: prevScores[categoryId] + 1
+        setLocalResult('correct')
+        setSoloScores(prev => ({
+          ...prev,
+          [categories[spinningIndex].id]: prev[categories[spinningIndex].id] + 1
         }))
       } else {
-        setResult('incorrect')
+        setLocalResult('incorrect')
       }
-      setGameState('result')
+      setLocalGameState('result')
     }
   }
 
-  // --- COMPONENTES DE RENDERIZAÇÃO (ADAPTADOS) ---
+  // --- RENDERERS ---
 
-  // 5.1. Renderiza o Placar (Adaptado para Versão Solo e Versus)
   const renderScoreboard = () => {
-    if (gameId && opponentName) {
-      const currentPlayerScore = isPlayerOne
-        ? playerScores.player1
-        : playerScores.player2
-      const opponentScore = isPlayerOne
-        ? playerScores.player2
-        : playerScores.player1
-      const currentPlayerName = playerName
-
+    // Só renderiza placar online se tiver dados
+    if (gameId && gameData) {
       return (
-        <div className='w-full max-w-lg mx-auto bg-gray-700 p-4 rounded-lg shadow-xl'>
-          <h2 className='text-2xl font-bold text-center text-white mb-4'>
-            Sala: {gameId} ({isHost ? 'Host' : 'Convidado'})
-          </h2>
-          <div className='flex justify-between text-center'>
-            <div
-              className={`p-4 rounded-lg flex-1 mx-2 ${
-                isPlayerOne ? 'bg-indigo-600' : 'bg-red-600'
-              } shadow-md`}
-            >
-              <FontAwesomeIcon
-                icon={faUser}
-                className='w-5 h-5 text-white mb-1'
-              />
-              <p className='font-bold text-xl'>{currentPlayerName}</p>
-              <p className='text-3xl font-extrabold'>{currentPlayerScore}</p>
-            </div>
-            <div
-              className={`p-4 rounded-lg flex-1 mx-2 ${
-                !isPlayerOne ? 'bg-indigo-600' : 'bg-red-600'
-              } shadow-md`}
-            >
-              <FontAwesomeIcon
-                icon={faUser}
-                className='w-5 h-5 text-white mb-1'
-              />
-              <p className='font-bold text-xl'>
-                {opponentName || 'Esperando...'}
+        <div className='w-full max-w-lg bg-gray-800 p-4 rounded-xl shadow-lg mb-8 border border-gray-700'>
+          <div className='flex justify-between items-center text-gray-400 text-xs mb-2 font-mono'>
+            <span>SALA: {gameId}</span>
+            <span>{isHost ? '(VOCÊ É O HOST)' : '(VOCÊ É O VISITANTE)'}</span>
+          </div>
+          <div className='flex justify-between items-center gap-4'>
+            {/* PLAYER 1 (HOST) */}
+            <div className='flex-1 bg-blue-900/30 p-3 rounded-lg border border-blue-500/30 text-center'>
+              <p className='text-blue-200 font-bold truncate text-sm uppercase'>
+                {gameData.player1Name}
               </p>
-              <p className='text-3xl font-extrabold'>{opponentScore}</p>
+              <p className='text-3xl font-black text-white'>
+                {gameData.player1Score}
+              </p>
+            </div>
+            <span className='text-gray-500 font-bold italic'>VS</span>
+            {/* PLAYER 2 (VISITANTE) */}
+            <div className='flex-1 bg-red-900/30 p-3 rounded-lg border border-red-500/30 text-center'>
+              <p className='text-red-200 font-bold truncate text-sm uppercase'>
+                {gameData.player2Name || 'Esperando...'}
+              </p>
+              <p className='text-3xl font-black text-white'>
+                {gameData.player2Score}
+              </p>
             </div>
           </div>
-          {gameState === 'waiting' && (
-            <p className='text-center text-yellow-300 mt-2 font-medium'>
-              Aguardando o Host iniciar a próxima rodada...
-            </p>
-          )}
-          {gameState === 'question' && (
-            <p className='text-center text-blue-300 mt-2 font-medium'>
-              Responda o mais rápido possível!
-            </p>
-          )}
         </div>
       )
     }
-
+    // Placar Solo
     return (
-      <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 p-2 rounded-lg bg-gray-900/50 shadow-inner'>
-        {categories.map((category, index) => {
-          const isSelected =
-            selectedCategory &&
-            selectedCategory.id === category.id &&
-            (gameState === 'question' || gameState === 'result')
-          const isSpinning = gameState === 'spinning' && spinningIndex === index
-
-          let highlightClass = 'scale-100 opacity-70'
-          if (isSelected) {
-            highlightClass = 'scale-110 opacity-100 shadow-lg shadow-white/30'
-          } else if (isSpinning) {
-            highlightClass =
-              'scale-110 opacity-100 shadow-lg shadow-blue-400/50'
-          }
-
-          return (
-            <div
-              key={category.id}
-              className={`flex flex-col items-center p-2 rounded-lg ${category.color} ${highlightClass} transition-all duration-150 transform-gpu`}
-            >
-              <FontAwesomeIcon
-                icon={category.icon}
-                className='w-6 h-6 sm:w-8 sm:h-8 text-white'
-              />
-              <span className='text-white font-semibold text-xs sm:text-sm mt-1'>
-                {category.name}
-              </span>
-              <span className='text-white font-bold text-lg sm:text-2xl'>
-                {scores[category.id]}
-              </span>
-            </div>
-          )
-        })}
+      <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 w-full max-w-2xl mb-8'>
+        {categories.map((cat, i) => (
+          <div
+            key={cat.id}
+            className={`${
+              cat.color
+            } p-2 rounded-lg flex flex-col items-center transition-transform ${
+              localGameState === 'spinning' && spinningIndex === i
+                ? 'scale-110 ring-2 ring-white'
+                : 'scale-100 opacity-80'
+            }`}
+          >
+            <FontAwesomeIcon icon={cat.icon} className='text-white mb-1' />
+            <span className='font-bold text-white'>{soloScores[cat.id]}</span>
+          </div>
+        ))}
       </div>
     )
   }
 
-  // 5.2. Renderiza o Menu Versus
-  const renderVersusMenu = () => (
-    <div className='w-full max-w-lg p-6 bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg'>
-      <h3 className='text-2xl font-bold text-white mb-4 text-center'>
-        Modo Versus (Online)
-      </h3>
-
-      {error && <p className='text-red-400 mb-4 text-center'>{error}</p>}
-
-      <input
-        type='text'
-        placeholder='Seu Nome de Jogador'
-        value={playerName}
-        onChange={e => setPlayerName(e.target.value)}
-        className='w-full p-3 mb-3 rounded-lg text-gray-900 placeholder-gray-500'
-      />
-
-      <div className='flex space-x-4 mb-6'>
-        <button
-          onClick={createGame}
-          className='flex-1 p-3 bg-green-600 text-white rounded-lg font-bold
-                     hover:bg-green-700 active:scale-95 transition-transform'
-        >
-          Criar Sala (Host)
-        </button>
-        <div className='w-px bg-gray-600'></div>
-        <input
-          type='text'
-          placeholder='ID da Sala'
-          value={gameId}
-          onChange={e => setGameId(e.target.value.toUpperCase())}
-          className='flex-1 p-3 rounded-lg text-gray-900 placeholder-gray-500 text-center uppercase'
-          maxLength={6}
-        />
-        <button
-          onClick={joinGame}
-          className='flex-1 p-3 bg-blue-600 text-white rounded-lg font-bold
-                     hover:bg-blue-700 active:scale-95 transition-transform'
-        >
-          Entrar
-        </button>
-      </div>
-
-      <button
-        onClick={() => setGameState('idle')}
-        className='w-full p-3 bg-gray-600 text-white rounded-lg font-bold
-                   hover:bg-gray-700 transition-colors mt-4'
-      >
-        Voltar (Modo Solo)
-      </button>
-    </div>
-  )
-
-  // 5.3. Renderiza a Tela de Espera (Waiting)
-  const renderWaitingScreen = () => (
-    <div className='w-full max-w-lg p-6 bg-gray-800/80 rounded-lg shadow-lg text-center h-48 flex flex-col justify-center items-center'>
-      <h3 className='text-2xl font-bold text-white mb-2'>
-        Aguardando Oponente...
-      </h3>
-      <p className='text-xl text-yellow-400 font-mono mb-4'>ID: {gameId}</p>
-      {opponentName && (
-        <p className='text-lg text-green-400'>
-          Oponente encontrado: {opponentName}!
-        </p>
-      )}
-      <p className='text-sm text-gray-400'>
-        Compartilhe o ID da sala para começar.
-      </p>
-
-      {/* Botão para Host Iniciar */}
-      {isHost && opponentName && (
-        <button
-          onClick={spinWheel}
-          className='w-full p-3 mt-4 bg-green-600 text-white rounded-lg font-bold
-                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-        >
-          INICIAR JOGO!
-        </button>
-      )}
-
-      {/* Botão para qualquer um voltar */}
-      <button
-        onClick={resetGame}
-        className='w-full p-3 mt-4 bg-red-600 text-white rounded-lg font-bold
-                   text-lg hover:bg-red-700 active:scale-100 transition-transform shadow-md'
-      >
-        Sair da Sala
-      </button>
-    </div>
-  )
-
-  // 5.4. Renderiza a Tela de Resultados Versus (Sincronizada)
-  const renderVersusResult = () => {
-    let message = ''
-    let bgClass = 'bg-gray-600/90'
-
-    if (lastSyncedResult) {
-      const myResult = lastSyncedResult
-
-      if (myResult === 'correct') {
-        message = 'Sua Resposta: CORRETA! (+1)'
-        bgClass = 'bg-green-600/90'
-      } else if (myResult === 'incorrect') {
-        message = 'Sua Resposta: INCORRETA!'
-        bgClass = 'bg-red-700/90'
-      } else {
-        message = lastSyncedResult
-      }
-    } else {
-      message = 'Aguardando o Host para a próxima rodada...'
-    }
-
-    return (
-      <div
-        className={`w-full max-w-lg p-6 ${bgClass} backdrop-blur-sm rounded-lg shadow-lg text-center`}
-      >
-        <h3 className='text-3xl font-extrabold text-white mb-3'>{message}</h3>
-
-        {isHost ? (
-          <button
-            onClick={spinWheel}
-            className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
-                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-          >
-            Próxima Rodada (Girar)!
-          </button>
-        ) : (
-          <p className='text-white mt-4'>
-            Aguarde o Host ({opponentName}) iniciar a próxima pergunta.
-          </p>
-        )}
-
-        <button
-          onClick={resetGame}
-          className='w-full p-3 mt-4 bg-red-600 text-white rounded-lg font-bold
-                       text-lg hover:bg-red-700 active:scale-100 transition-transform shadow-md'
-        >
-          Sair da Sala
-        </button>
-      </div>
-    )
-  }
-
-  // 5.5. Renderiza a Área Central
-  const renderCentralArea = () => {
-    if (error) {
-      return (
-        <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-auto flex flex-col justify-center'>
-          <h3 className='text-xl font-bold text-white mb-2'>Erro</h3>
-          <p className='text-red-100'>{error}</p>
-          <button
-            onClick={() => {
-              setError(null)
-              setGameState(gameId ? 'idle' : 'versus-menu')
-            }}
-            className='w-full p-3 mt-4 bg-white text-gray-800 rounded-lg font-bold
-                     text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-          >
-            Voltar
-          </button>
-        </div>
-      )
-    }
-
-    if (gameState === 'versus-menu') {
-      return renderVersusMenu()
-    }
-
-    if (gameState === 'waiting') {
-      return renderWaitingScreen()
-    }
-
-    if (gameState === 'question' && currentQuestion) {
-      return (
-        <div className='w-full max-w-lg p-6 bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg'>
-          <h3 className='text-xl font-bold text-white mb-4 text-center'>
-            {currentQuestion.pergunta}
-          </h3>
-          <div className='grid grid-cols-1 sm:grid-cols-2 gap-3'>
-            {currentQuestion.alternativas.map((alt, index) => (
-              <button
-                key={index}
-                onClick={() => handleAnswer(alt)}
-                className='p-4 bg-blue-600 text-white rounded-lg font-semibold
-                           hover:bg-blue-500 active:scale-95 transition-all shadow-md'
-              >
-                {alt}
-              </button>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (gameState === 'result') {
-      if (gameId) {
-        return renderVersusResult()
-      }
-
-      const isCorrect = result === 'correct'
-      return (
-        <div
-          className={`w-full max-w-lg p-6 ${
-            isCorrect ? 'bg-green-600/90' : 'bg-red-700/90'
-          } backdrop-blur-sm rounded-lg shadow-lg text-center`}
-        >
-          <h3 className='text-3xl font-extrabold text-white mb-3'>
-            {isCorrect ? 'Correto!' : 'Incorreto!'}
-          </h3>
-          {!isCorrect && currentQuestion && (
-            <p className='text-white text-lg mb-4'>
-              A resposta era:{' '}
-              <strong className='font-bold'>
-                {currentQuestion.respostaCorreta}
-              </strong>
-            </p>
-          )}
-          <button
-            onClick={spinWheel}
-            className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
-                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-          >
-            Questionar Novamente!
-          </button>
-        </div>
-      )
-    }
-
-    if (gameState === 'spinning') {
-      return (
-        <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
-          <svg
-            className='animate-spin h-10 w-10 text-white'
-            xmlns='http://www.w3.org/2000/svg'
-            fill='none'
-            viewBox='0 0 24 24'
-          >
-            <circle
-              className='opacity-25'
-              cx='12'
-              cy='12'
-              r='10'
-              stroke='currentColor'
-              strokeWidth='4'
-            ></circle>
-            <path
-              className='opacity-75'
-              fill='currentColor'
-              d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'
-            ></path>
-          </svg>
-          <h3 className='text-2xl font-bold text-white animate-pulse mt-4'>
-            Gerando questão com IA...
-          </h3>
-        </div>
-      )
-    }
-
-    if (gameState === 'idle') {
-      return (
-        <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
-          {gameId ? (
-            <button
-              onClick={spinWheel}
-              disabled={!groqClient || !isHost}
-              className='w-56 h-56 bg-white text-gray-800 rounded-full
-                         text-xl font-bold shadow-xl
-                         hover:scale-105 active:scale-95 transition-transform
-                         disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
-            >
-              {isHost
-                ? 'GIRAR ROLETA!'
-                : `Aguardando ${opponentName || 'Host'}`}
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={spinWheel}
-                disabled={!groqClient}
-                className='w-48 h-48 bg-white text-gray-800 rounded-full
-                            text-2xl font-bold shadow-xl mb-4
-                            hover:scale-105 active:scale-95 transition-transform
-                            disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
-              >
-                JOGAR SOLO
-              </button>
-              <button
-                onClick={() => setGameState('versus-menu')}
-                className='w-48 p-3 bg-pink-500 text-white rounded-lg font-bold
-                            hover:bg-pink-600 active:scale-95 transition-transform shadow-md flex items-center justify-center'
-              >
-                <FontAwesomeIcon icon={faUserGroup} className='w-4 h-4 mr-2' />
-                Modo Versus
-              </button>
-            </>
-          )}
-        </div>
-      )
-    }
-
-    return null
-  }
-
-  // --- Renderização Principal do App ---
   return (
-    <div
-      className='flex flex-col items-center justify-between min-h-screen w-full
-                   bg-gradient-to-b from-gray-800 to-gray-900 text-white p-4 font-sans'
-    >
-      <header className='w-full max-w-2xl mb-4'>
-        <h1
-          className='text-4xl font-extrabold text-center mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-pink-500'
-          style={{ filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.3))' }}
-        >
+    <div className='min-h-screen bg-gray-900 text-white font-sans flex flex-col items-center py-8 px-4'>
+      <header className='mb-6 text-center'>
+        <h1 className='text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-pink-500 drop-shadow-sm'>
           Questionados
         </h1>
-        {renderScoreboard()}
       </header>
 
-      <main className='flex flex-col items-center justify-center flex-grow w-full my-8'>
-        {renderCentralArea()}
+      {renderScoreboard()}
+
+      <main className='w-full max-w-xl flex-grow flex flex-col justify-center'>
+        {error && (
+          <div className='bg-red-500/80 p-4 rounded-lg text-center mb-4 font-bold border border-red-400'>
+            {error}
+            <button
+              onClick={() => setError(null)}
+              className='block mx-auto mt-2 text-xs underline hover:text-gray-200'
+            >
+              Fechar
+            </button>
+          </div>
+        )}
+
+        {/* MENU PRINCIPAL / VERSUS */}
+        {localGameState === 'versus-menu' && (
+          <div className='bg-gray-800 p-8 rounded-2xl shadow-2xl border border-gray-700'>
+            <h2 className='text-2xl font-bold text-center mb-6'>Modo Online</h2>
+            <input
+              className='w-full bg-gray-700 p-4 rounded-lg text-white mb-4 focus:ring-2 focus:ring-blue-500 outline-none transition-all'
+              placeholder='Seu Nome'
+              value={playerName}
+              onChange={e => setPlayerName(e.target.value)}
+            />
+            <div className='flex gap-3 mb-4'>
+              <button
+                onClick={createGame}
+                className='flex-1 bg-green-600 hover:bg-green-500 py-3 rounded-lg font-bold transition-colors'
+              >
+                Criar Sala
+              </button>
+              <div className='flex flex-1 gap-2'>
+                <input
+                  className='w-full bg-gray-700 text-center rounded-lg uppercase font-mono'
+                  placeholder='CÓDIGO'
+                  maxLength={6}
+                  value={gameId}
+                  onChange={e => setGameId(e.target.value.toUpperCase())}
+                />
+                <button
+                  onClick={joinGame}
+                  className='bg-blue-600 hover:bg-blue-500 px-4 rounded-lg font-bold transition-colors'
+                >
+                  Ir
+                </button>
+              </div>
+            </div>
+            <button
+              onClick={() => setLocalGameState('idle')}
+              className='w-full py-3 text-gray-400 hover:text-white font-medium'
+            >
+              Jogar Solo
+            </button>
+          </div>
+        )}
+
+        {/* SALA DE ESPERA (WAITING) */}
+        {localGameState === 'waiting' && (
+          <div className='bg-gray-800 p-8 rounded-2xl shadow-2xl text-center border border-gray-700'>
+            <div className='mb-6 animate-pulse'>
+              <FontAwesomeIcon
+                icon={faUserGroup}
+                className='text-5xl text-blue-400'
+              />
+            </div>
+            <h2 className='text-2xl font-bold mb-2'>Sala de Espera</h2>
+            <p className='text-gray-400 mb-6 font-mono tracking-widest text-xl bg-gray-900/50 py-2 rounded-lg inline-block px-6 select-all'>
+              {gameId}
+            </p>
+
+            {gameData?.player2Name ? (
+              <div className='bg-green-500/20 border border-green-500/50 p-4 rounded-xl mb-6'>
+                <p className='text-green-400 font-bold text-lg'>
+                  Oponente Conectado!
+                </p>
+                <p className='text-white text-sm mt-1'>
+                  {isHost
+                    ? `${gameData.player2Name} entrou.`
+                    : `Você entrou na sala de ${gameData.player1Name}.`}
+                </p>
+              </div>
+            ) : (
+              <div className='bg-yellow-500/20 border border-yellow-500/50 p-4 rounded-xl mb-6'>
+                <p className='text-yellow-400 font-bold'>
+                  Aguardando oponente...
+                </p>
+                <p className='text-xs text-gray-400 mt-1'>
+                  Compartilhe o código acima.
+                </p>
+              </div>
+            )}
+
+            {/* BOTÃO DE INÍCIO (Apenas Host vê) */}
+            {isHost && gameData?.player2Name ? (
+              <button
+                onClick={startRound}
+                className='w-full bg-gradient-to-r from-blue-600 to-purple-600 py-4 rounded-xl font-black text-xl hover:scale-105 transition-transform shadow-lg animate-bounce'
+              >
+                INICIAR JOGO
+              </button>
+            ) : (
+              <p className='text-gray-500 text-sm animate-pulse'>
+                {isHost
+                  ? 'Aguardando jogador 2...'
+                  : 'Aguardando o Host iniciar o jogo...'}
+              </p>
+            )}
+
+            <button
+              onClick={resetGame}
+              className='mt-8 text-red-400 hover:text-red-300 text-sm underline'
+            >
+              Sair da Sala
+            </button>
+          </div>
+        )}
+
+        {/* GIRANDO (SPINNING) */}
+        {localGameState === 'spinning' && (
+          <div className='text-center py-12'>
+            <div className='text-7xl mb-6 animate-spin'>🎲</div>
+            <h2 className='text-3xl font-bold text-white mb-2'>Sorteando...</h2>
+            <p className='text-gray-400'>A IA está gerando sua pergunta.</p>
+          </div>
+        )}
+
+        {/* PERGUNTA (QUESTION) */}
+        {localGameState === 'question' && localQuestion && (
+          <div className='bg-gray-800 p-6 rounded-2xl shadow-2xl border border-gray-700'>
+            <div className='flex justify-center mb-6'>
+              <span
+                className={`px-4 py-1 rounded-full text-xs font-bold uppercase tracking-wider text-white ${
+                  categories.find(
+                    c =>
+                      c.id ===
+                      (gameData?.selectedCategory ||
+                        (categories[spinningIndex]
+                          ? categories[spinningIndex].id
+                          : 'art'))
+                  )?.color
+                }`}
+              >
+                {
+                  categories.find(
+                    c =>
+                      c.id ===
+                      (gameData?.selectedCategory ||
+                        (categories[spinningIndex]
+                          ? categories[spinningIndex].id
+                          : 'art'))
+                  )?.name
+                }
+              </span>
+            </div>
+            <h3 className='text-xl font-bold text-center mb-8 leading-snug'>
+              {localQuestion.pergunta}
+            </h3>
+            <div className='grid grid-cols-1 gap-3'>
+              {localQuestion.alternativas.map((alt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleAnswer(alt)}
+                  className='bg-gray-700 hover:bg-blue-600 hover:border-blue-400 border border-gray-600 p-4 rounded-xl text-left transition-all font-medium'
+                >
+                  {alt}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* RESULTADO / IDLE */}
+        {(localGameState === 'result' ||
+          (localGameState === 'idle' && gameId)) && (
+          <div className='bg-gray-800 p-8 rounded-2xl shadow-2xl text-center border border-gray-700'>
+            <div className='text-6xl mb-4'>
+              {localResult === 'correct'
+                ? '🎉'
+                : localResult === 'incorrect'
+                ? '❌'
+                : '⏳'}
+            </div>
+            <h2 className='text-3xl font-bold mb-2'>
+              {localResult === 'correct'
+                ? 'Acertou!'
+                : localResult === 'incorrect'
+                ? 'Errou!'
+                : 'Fim da Rodada'}
+            </h2>
+
+            {gameId ? (
+              <div className='mt-6'>
+                {isHost ? (
+                  <button
+                    onClick={startRound}
+                    className='bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl font-bold shadow-lg transition-transform active:scale-95'
+                  >
+                    Próxima Pergunta
+                  </button>
+                ) : (
+                  <p className='text-yellow-400 animate-pulse'>
+                    Aguardando Host girar a roleta...
+                  </p>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={spinWheel}
+                className='mt-6 bg-white text-gray-900 px-8 py-3 rounded-full font-bold hover:scale-105 transition-transform'
+              >
+                Continuar
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* MENU IDLE SOLO */}
+        {localGameState === 'idle' && !gameId && (
+          <div className='flex flex-col gap-4 items-center'>
+            <button
+              onClick={spinWheel}
+              className='w-full max-w-xs bg-white text-gray-900 py-4 rounded-2xl font-black text-xl shadow-xl hover:scale-105 transition-transform flex items-center justify-center gap-2'
+            >
+              JOGAR SOLO
+            </button>
+            <button
+              onClick={() => setLocalGameState('versus-menu')}
+              className='text-gray-400 hover:text-white mt-4'
+            >
+              Voltar para Menu
+            </button>
+          </div>
+        )}
       </main>
 
-      <footer className='w-full text-center p-4 text-gray-500 text-sm'>
-        Criado para fins educacionais. Powered by Groq.
+      <footer className='mt-8 text-gray-600 text-xs text-center'>
+        Desenvolvido para fins educacionais • Powered by Groq AI
       </footer>
     </div>
   )
