@@ -13,7 +13,15 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 
 // --- Configuração das Categorias ---
-var lastQuestions = []
+const lastQuestions = {
+  art: [],
+  science: [],
+  sports: [],
+  geography: [],
+  entertainment: [],
+  history: []
+}
+
 const categories = [
   {
     id: 'art',
@@ -142,13 +150,20 @@ export default function App () {
     }, spinDuration)
   }
 
-  // --- Lógica da API Groq (MUDANÇA TOTAL AQUI) ---
+  // --- Lógica da API Groq ---
   const fetchQuestion = async categoryName => {
     if (!groqClient) {
       setError('Cliente Groq não inicializado.')
       setGameState('idle')
       return
     }
+
+    // PASSO 1: Encontrar o ID da categoria baseada no nome
+    const currentCategoryObj = categories.find(c => c.name === categoryName)
+    const categoryId = currentCategoryObj ? currentCategoryObj.id : 'art' // fallback seguro
+
+    // PASSO 2: Pegar o histórico específico desta categoria
+    const categoryHistory = lastQuestions[categoryId] || []
 
     // Instrução do sistema
     const systemPrompt = `
@@ -165,7 +180,9 @@ export default function App () {
       2. Nível Fácil/Médio para famílias.
       3. 4 alternativas curtas.
       4. "respostaCorreta" deve ser idêntica a uma das alternativas.
-      5. Evite repetir estas perguntas ou criar perguntas similares: ${lastQuestions.slice(-10).join(', ')}.
+      5. Evite repetir estas perguntas: ${categoryHistory.join(
+        ', '
+      )}.  // MUDANÇA: Usa apenas o histórico da categoria
       6. Idioma: Português do Brasil.
     `.trim()
 
@@ -176,10 +193,12 @@ export default function App () {
         const completion = await groqClient.chat.completions.create({
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Gera uma pergunta sobre ${categoryName}.` }
+            {
+              role: 'user',
+              content: `Gera uma pergunta sobre ${categoryName}.`
+            }
           ],
-          // MUDANÇA AQUI: Use o modelo mais recente suportado (Llama 3.3)
-          model: 'llama-3.3-70b-versatile', 
+          model: 'llama-3.3-70b-versatile',
           temperature: 0.7,
           response_format: { type: 'json_object' }
         })
@@ -190,7 +209,6 @@ export default function App () {
 
         const parsedQuestion = JSON.parse(jsonText)
 
-        // Validação básica
         if (
           !parsedQuestion.pergunta ||
           !parsedQuestion.alternativas ||
@@ -199,13 +217,18 @@ export default function App () {
           throw new Error('JSON inválido ou incompleto.')
         }
 
-        // Atualiza histórico
-        lastQuestions.push(parsedQuestion.pergunta)
-        if (lastQuestions.length > 20) lastQuestions.shift()
+        // PASSO 3: Salvar na lista específica da categoria
+        if (lastQuestions[categoryId]) {
+          lastQuestions[categoryId].push(parsedQuestion.pergunta)
+          // Limita o histórico para as últimas 20 perguntas DESTA categoria
+          if (lastQuestions[categoryId].length > 20) {
+            lastQuestions[categoryId].shift()
+          }
+        }
 
         setCurrentQuestion(parsedQuestion)
         setGameState('question')
-        return // Sucesso
+        return
       } catch (err) {
         console.warn(`Tentativa ${i + 1} falhou:`, err)
 
@@ -213,7 +236,6 @@ export default function App () {
           setError('Não foi possível gerar a pergunta. Tente novamente.')
           setGameState('idle')
         } else {
-          // Pequena pausa antes de tentar de novo
           await new Promise(resolve => setTimeout(resolve, 1000))
         }
       }
