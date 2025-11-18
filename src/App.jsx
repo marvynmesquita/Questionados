@@ -179,7 +179,7 @@ export default function App () {
             { role: 'user', content: `Gera uma pergunta sobre ${categoryName}.` }
           ],
           // MUDANÇA AQUI: Use o modelo mais recente suportado (Llama 3.3)
-          model: 'llama-3.1-8b-instant', 
+          model: 'llama-3.3-70b-versatile', 
           temperature: 0.7,
           response_format: { type: 'json_object' }
         })
