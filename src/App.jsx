@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
-// MUDANÇA 1: Importar Groq
 import Groq from 'groq-sdk'
+import { db, doc, getDoc, setDoc, onSnapshot, updateDoc } from './firebase'
+import { customAlphabet } from 'nanoid'
 
+// Ícones
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPalette,
@@ -9,61 +11,77 @@ import {
   faFutbol,
   faGlobe,
   faTicket,
-  faLandmark
+  faLandmark,
+  faUserGroup,
+  faBrain,
+  faTrophy,
+  faTimesCircle,
+  faCheckCircle,
+  faLightbulb
 } from '@fortawesome/free-solid-svg-icons'
 
-// --- Configuração das Categorias ---
-const lastQuestions = {
-  art: [],
-  science: [],
-  sports: [],
-  geography: [],
-  entertainment: [],
-  history: []
-}
+const nanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
 
+// Categorias
 const categories = [
   {
     id: 'art',
     name: 'Arte',
     color: 'bg-red-500',
+    textColor: 'text-red-500',
     icon: faPalette
   },
   {
     id: 'science',
     name: 'Ciência',
     color: 'bg-green-500',
+    textColor: 'text-green-500',
     icon: faFlask
   },
   {
     id: 'sports',
     name: 'Esporte',
     color: 'bg-blue-500',
+    textColor: 'text-blue-500',
     icon: faFutbol
   },
   {
     id: 'geography',
     name: 'Geografia',
     color: 'bg-yellow-500',
+    textColor: 'text-yellow-600',
     icon: faGlobe
   },
   {
     id: 'entertainment',
-    name: 'Entretenimento',
+    name: 'Entretenim.', // Abreviação para mobile
     color: 'bg-pink-500',
+    textColor: 'text-pink-500',
     icon: faTicket
   },
   {
     id: 'history',
     name: 'História',
     color: 'bg-purple-500',
+    textColor: 'text-purple-500',
     icon: faLandmark
   }
 ]
 
 export default function App () {
-  // --- Estados do Jogo ---
-  const [scores, setScores] = useState({
+  const [playerName, setPlayerName] = useState('')
+  const [gameId, setGameId] = useState('')
+  const [isHost, setIsHost] = useState(false)
+  const [error, setError] = useState(null)
+
+  const [gameData, setGameData] = useState(null)
+
+  const [spinningIndex, setSpinningIndex] = useState(0)
+  const [localGameState, setLocalGameState] = useState('versus-menu')
+  const [localQuestion, setLocalQuestion] = useState(null)
+  const [localResult, setLocalResult] = useState(null)
+
+  const [soloScores, setSoloScores] = useState({
     art: 0,
     science: 0,
     sports: 0,
@@ -71,376 +89,673 @@ export default function App () {
     entertainment: 0,
     history: 0
   })
-  const [spinningIndex, setSpinningIndex] = useState(null)
-  const [selectedCategory, setSelectedCategory] = useState(null)
-  const [currentQuestion, setCurrentQuestion] = useState(null)
-  const [result, setResult] = useState(null)
-  const [gameState, setGameState] = useState('idle')
-  const [error, setError] = useState(null)
 
   const spinIntervalRef = useRef(null)
 
-  // --- Configuração da API Key ---
-  // MUDANÇA 2: Usar a variável de ambiente correta para Groq
   const rawApiKey = process.env.REACT_APP_GROQ_API_KEY
   const [apiKey, setApiKey] = useState(undefined)
 
   useEffect(() => {
     if (!rawApiKey || rawApiKey === 'undefined') {
-      setError(
-        'A chave da API Groq não está configurada. Verifique o ficheiro .env.local.'
-      )
       setApiKey(null)
     } else {
-      setError(null)
       setApiKey(rawApiKey)
     }
   }, [rawApiKey])
 
-  // MUDANÇA 3: Instanciar o cliente Groq
   const groqClient = useMemo(() => {
     if (apiKey) {
-      return new Groq({
-        apiKey: apiKey,
-        dangerouslyAllowBrowser: true // Necessário para React client-side
-      })
+      return new Groq({ apiKey: apiKey, dangerouslyAllowBrowser: true })
     }
     return null
   }, [apiKey])
 
   useEffect(() => {
     return () => {
-      if (spinIntervalRef.current) {
-        clearInterval(spinIntervalRef.current)
-      }
+      if (spinIntervalRef.current) clearInterval(spinIntervalRef.current)
     }
   }, [])
 
-  const spinWheel = () => {
-    if (!groqClient) {
-      setError('A chave da API não está configurada.')
-      return
-    }
+  // Sync Firebase
+  useEffect(() => {
+    if (!gameId) return
 
-    setGameState('spinning')
-    setCurrentQuestion(null)
-    setResult(null)
-    setError(null)
-    setSelectedCategory(null)
+    const cleanGameId = gameId.trim().toUpperCase()
+    const gameRef = doc(db, 'games', cleanGameId)
 
-    const spinDuration = 3000 // Reduzi um pouco para ser mais rápido
-    const spinInterval = 100
-    let currentSpinIndex = 0
+    const unsubscribe = onSnapshot(
+      gameRef,
+      docSnap => {
+        if (docSnap.exists()) {
+          const data = docSnap.data()
+          setGameData(data)
 
-    spinIntervalRef.current = setInterval(() => {
-      setSpinningIndex(currentSpinIndex % categories.length)
-      currentSpinIndex++
-    }, spinInterval)
-
-    setTimeout(() => {
-      clearInterval(spinIntervalRef.current)
-
-      const finalCategoryIndex = Math.floor(Math.random() * categories.length)
-      const finalCategory = categories[finalCategoryIndex]
-
-      setSelectedCategory(finalCategory)
-      setSpinningIndex(finalCategoryIndex)
-
-      fetchQuestion(finalCategory.name)
-    }, spinDuration)
-  }
-
-  // --- Lógica da API Groq ---
-  const fetchQuestion = async categoryName => {
-    if (!groqClient) {
-      setError('Cliente Groq não inicializado.')
-      setGameState('idle')
-      return
-    }
-
-    // PASSO 1: Encontrar o ID da categoria baseada no nome
-    const currentCategoryObj = categories.find(c => c.name === categoryName)
-    const categoryId = currentCategoryObj ? currentCategoryObj.id : 'art' // fallback seguro
-
-    // PASSO 2: Pegar o histórico específico desta categoria
-    const categoryHistory = lastQuestions[categoryId] || []
-
-    // Instrução do sistema
-    const systemPrompt = `
-      **Seu Papel:** Você é um assistente de IA para um jogo de trivia chamado 'Questionados'.
-      **Formato de Saída:** Você DEVE responder APENAS com um JSON válido. Não escreva nada antes ou depois do JSON.
-      **Estrutura do JSON:**
-      {
-        "pergunta": "Texto da pergunta",
-        "alternativas": ["Opção 1", "Opção 2", "Opção 3", "Opção 4"],
-        "respostaCorreta": "Texto exato de uma das opções"
-      }
-      **Regras:**
-      1. A pergunta deve ser sobre: ${categoryName}.
-      2. Nível Fácil/Médio para famílias.
-      3. 4 alternativas curtas.
-      4. "respostaCorreta" deve ser idêntica a uma das alternativas.
-      5. Evite repetir estas perguntas: ${categoryHistory.join(
-        ', '
-      )}.  // MUDANÇA: Usa apenas o histórico da categoria
-      6. Idioma: Português do Brasil.
-    `.trim()
-
-    const MAX_RETRIES = 3
-
-    for (let i = 0; i < MAX_RETRIES; i++) {
-      try {
-        const completion = await groqClient.chat.completions.create({
-          messages: [
-            { role: 'system', content: systemPrompt },
-            {
-              role: 'user',
-              content: `Gera uma pergunta sobre ${categoryName}.`
+          if (data.currentQuestion && data.gameState === 'question') {
+            if (
+              data.currentQuestion.pergunta !== localQuestion?.pergunta ||
+              localGameState !== 'question'
+            ) {
+              if (spinIntervalRef.current)
+                clearInterval(spinIntervalRef.current)
+              setLocalQuestion(data.currentQuestion)
+              setLocalGameState('question')
+              setLocalResult(null)
             }
-          ],
-          model: 'llama-3.3-70b-versatile',
-          temperature: 0.7,
-          response_format: { type: 'json_object' }
-        })
-
-        const jsonText = completion.choices[0]?.message?.content
-
-        if (!jsonText) throw new Error('Resposta vazia da API.')
-
-        const parsedQuestion = JSON.parse(jsonText)
-
-        if (
-          !parsedQuestion.pergunta ||
-          !parsedQuestion.alternativas ||
-          !parsedQuestion.respostaCorreta
-        ) {
-          throw new Error('JSON inválido ou incompleto.')
-        }
-
-        // PASSO 3: Salvar na lista específica da categoria
-        if (lastQuestions[categoryId]) {
-          lastQuestions[categoryId].push(parsedQuestion.pergunta)
-          // Limita o histórico para as últimas 20 perguntas DESTA categoria
-          if (lastQuestions[categoryId].length > 20) {
-            lastQuestions[categoryId].shift()
+          } else if (data.lastResult && data.gameState === 'idle') {
+            if (localGameState !== 'result') {
+              setLocalResult(data.lastResult)
+              setLocalGameState('result')
+            }
+          } else if (data.gameState === 'spinning') {
+            if (localGameState !== 'spinning') {
+              setLocalGameState('spinning')
+              if (!isHost) spinWheel(false)
+            }
+          } else if (data.gameState !== localGameState) {
+            if (localGameState !== 'versus-menu') {
+              setLocalGameState(data.gameState)
+            }
+          }
+        } else {
+          if (localGameState !== 'versus-menu') {
+            alert('A sala foi encerrada.')
+            resetGame()
           }
         }
+      },
+      error => console.error('Erro no listener:', error)
+    )
 
-        setCurrentQuestion(parsedQuestion)
-        setGameState('question')
-        return
-      } catch (err) {
-        console.warn(`Tentativa ${i + 1} falhou:`, err)
+    return () => unsubscribe()
+  }, [gameId, localGameState, localQuestion, isHost])
 
-        if (i === MAX_RETRIES - 1) {
-          setError('Não foi possível gerar a pergunta. Tente novamente.')
-          setGameState('idle')
+  const createGame = async () => {
+    if (!playerName) return setError('Digite seu nome')
+    setError(null)
+    const newId = nanoid()
+    try {
+      await setDoc(doc(db, 'games', newId), {
+        player1Name: playerName,
+        player1Score: 0,
+        player2Name: null,
+        player2Score: 0,
+        gameState: 'waiting',
+        currentQuestion: null,
+        selectedCategory: null,
+        lastResult: null,
+        createdAt: new Date().toISOString()
+      })
+      setGameId(newId)
+      setIsHost(true)
+      setLocalGameState('waiting')
+    } catch (e) {
+      console.error(e)
+      setError('Erro ao criar sala.')
+    }
+  }
+
+  const joinGame = async () => {
+    if (!playerName || !gameId) return setError('Preencha nome e código')
+    setError(null)
+    const cleanId = gameId.trim().toUpperCase()
+    const gameRef = doc(db, 'games', cleanId)
+    try {
+      const snap = await getDoc(gameRef)
+      if (snap.exists()) {
+        const data = snap.data()
+        if (!data.player2Name) {
+          await updateDoc(gameRef, { player2Name: playerName })
+          setIsHost(false)
+          setLocalGameState('waiting')
         } else {
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          setError('Sala cheia.')
+        }
+      } else {
+        setError('Sala não encontrada.')
+      }
+    } catch (e) {
+      console.error(e)
+      setError('Erro ao entrar.')
+    }
+  }
+
+  const resetGame = () => {
+    setGameId('')
+    setGameData(null)
+    setPlayerName('')
+    setIsHost(false)
+    setLocalGameState('versus-menu')
+    setLocalQuestion(null)
+    setLocalResult(null)
+    setError(null)
+  }
+
+  const startRound = async () => {
+    if (!isHost) return
+    await updateDoc(doc(db, 'games', gameId), {
+      gameState: 'spinning',
+      lastResult: null
+    })
+    spinWheel(true)
+  }
+
+  const spinWheel = async (shouldGenerate = true) => {
+    setLocalGameState('spinning')
+    setLocalResult(null)
+    setLocalQuestion(null)
+
+    let currentSpin = 0
+    if (spinIntervalRef.current) clearInterval(spinIntervalRef.current)
+
+    spinIntervalRef.current = setInterval(() => {
+      setSpinningIndex(prev => (prev + 1) % categories.length)
+      currentSpin++
+    }, 80)
+
+    setTimeout(async () => {
+      clearInterval(spinIntervalRef.current)
+      const finalIndex = Math.floor(Math.random() * categories.length)
+      setSpinningIndex(finalIndex)
+      const category = categories[finalIndex]
+
+      if (shouldGenerate) {
+        if (!gameId || isHost) {
+          await generateQuestion(category)
         }
       }
+    }, 2500)
+  }
+
+  const generateQuestion = async category => {
+    if (!groqClient) return
+
+    const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a categoria: ${category.name}.
+    Responda APENAS um JSON neste formato exato, sem markdown: 
+    {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta"}.
+    Idioma: Português do Brasil.`
+
+    try {
+      const completion = await groqClient.chat.completions.create({
+        messages: [{ role: 'user', content: prompt }],
+        model: 'llama-3.3-70b-versatile',
+        response_format: { type: 'json_object' },
+        temperature: 0.7
+      })
+
+      const content = JSON.parse(completion.choices[0]?.message?.content)
+
+      if (gameId) {
+        await updateDoc(doc(db, 'games', gameId), {
+          currentQuestion: content,
+          selectedCategory: category.id,
+          gameState: 'question'
+        })
+      } else {
+        setLocalQuestion(content)
+        setLocalGameState('question')
+      }
+    } catch (e) {
+      console.error(e)
+      setError('A IA demorou para responder. Tente novamente.')
+      if (gameId)
+        await updateDoc(doc(db, 'games', gameId), { gameState: 'idle' })
+      else setLocalGameState('idle')
     }
   }
 
-  const handleAnswer = answer => {
-    if (gameState !== 'question') return
+  const handleAnswer = async answer => {
+    if (!localQuestion) return
+    const isCorrect = answer === localQuestion.respostaCorreta
 
-    const isCorrect = answer === currentQuestion.respostaCorreta
-    if (isCorrect) {
-      setResult('correct')
-      setScores(prevScores => ({
-        ...prevScores,
-        [selectedCategory.id]: prevScores[selectedCategory.id] + 1
-      }))
+    if (gameId) {
+      const myScoreField = isHost ? 'player1Score' : 'player2Score'
+      const currentScore = (gameData && gameData[myScoreField]) || 0
+      try {
+        await updateDoc(doc(db, 'games', gameId), {
+          [myScoreField]: currentScore + (isCorrect ? 1 : 0),
+          lastResult: isCorrect ? 'correct' : 'incorrect',
+          gameState: 'idle'
+        })
+      } catch (e) {
+        console.error('Erro ao enviar resposta:', e)
+      }
     } else {
-      setResult('incorrect')
+      if (isCorrect) {
+        setLocalResult('correct')
+        setSoloScores(prev => ({
+          ...prev,
+          [categories[spinningIndex].id]: prev[categories[spinningIndex].id] + 1
+        }))
+      } else {
+        setLocalResult('incorrect')
+      }
+      setLocalGameState('result')
     }
-    setGameState('result')
   }
 
-  // --- Renderização (Mantida igual, apenas ajustando chamadas) ---
-  const renderScoreboard = () => (
-    <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 p-2 rounded-lg bg-gray-900/50 shadow-inner'>
-      {categories.map((category, index) => {
-        const isSelected =
-          selectedCategory &&
-          selectedCategory.id === category.id &&
-          (gameState === 'question' || gameState === 'result')
-        const isSpinning = gameState === 'spinning' && spinningIndex === index
+  // --- RENDERERS ---
 
-        let highlightClass = 'scale-100 opacity-70'
-        if (isSelected) {
-          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-white/30'
-        } else if (isSpinning) {
-          highlightClass = 'scale-110 opacity-100 shadow-lg shadow-blue-400/50'
+  const renderCategoryCard = (cat, isSelected = false) => (
+    <div
+      key={cat.id}
+      className={`
+        flex flex-col items-center justify-center p-3 sm:p-4 rounded-2xl transition-all duration-300 shadow-lg aspect-square
+        ${
+          isSelected
+            ? `${cat.color} scale-105 sm:scale-110 ring-4 ring-white z-10`
+            : 'bg-gray-800 opacity-60 scale-95'
         }
-
-        return (
-          <div
-            key={category.id}
-            className={`flex flex-col items-center p-2 rounded-lg ${category.color} ${highlightClass} transition-all duration-150 transform-gpu`}
-          >
-            <FontAwesomeIcon
-              icon={category.icon}
-              className='w-6 h-6 sm:w-8 sm:h-8 text-white'
-            />
-            <span className='text-white font-semibold text-xs sm:text-sm mt-1'>
-              {category.name}
-            </span>
-            <span className='text-white font-bold text-lg sm:text-2xl'>
-              {scores[category.id]}
-            </span>
-          </div>
-        )
-      })}
+      `}
+    >
+      <div className='bg-white/20 p-2 sm:p-3 rounded-full mb-2'>
+        <FontAwesomeIcon
+          icon={cat.icon}
+          className='text-white text-xl sm:text-2xl'
+        />
+      </div>
+      <span className='text-white font-bold text-xs sm:text-sm uppercase tracking-wider text-center'>
+        {cat.name}
+      </span>
+      {/* Mostra score apenas se não estiver girando a roleta principal */}
+      {localGameState !== 'spinning' && !gameId && (
+        <span className='text-[10px] sm:text-xs font-mono mt-1 text-white/80'>
+          Lvl {soloScores[cat.id]}
+        </span>
+      )}
     </div>
   )
 
-  const renderCentralArea = () => {
-    if (error) {
-      return (
-        <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-auto flex flex-col justify-center'>
-          <h3 className='text-xl font-bold text-white mb-2'>Erro</h3>
-          <p className='text-red-100'>{error}</p>
-          <button
-            onClick={() => {
-              setError(null)
-              setGameState('idle')
-            }}
-            className='w-full p-3 mt-4 bg-white text-gray-800 rounded-lg font-bold
-                     text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-          >
-            Tentar Novamente
-          </button>
-        </div>
-      )
-    }
-
-    if (gameState === 'question' && currentQuestion) {
-      return (
-        <div className='w-full max-w-lg p-6 bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg'>
-          <h3 className='text-xl font-bold text-white mb-4 text-center'>
-            {currentQuestion.pergunta}
-          </h3>
-          <div className='grid grid-cols-1 sm:grid-cols-2 gap-3'>
-            {currentQuestion.alternativas.map((alt, index) => (
-              <button
-                key={index}
-                onClick={() => handleAnswer(alt)}
-                className='p-4 bg-blue-600 text-white rounded-lg font-semibold
-                           hover:bg-blue-500 active:scale-95 transition-all shadow-md'
-              >
-                {alt}
-              </button>
-            ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (gameState === 'result') {
-      const isCorrect = result === 'correct'
-      return (
-        <div
-          className={`w-full max-w-lg p-6 ${
-            isCorrect ? 'bg-green-600/90' : 'bg-red-700/90'
-          } backdrop-blur-sm rounded-lg shadow-lg text-center`}
-        >
-          <h3 className='text-3xl font-extrabold text-white mb-3'>
-            {isCorrect ? 'Correto!' : 'Incorreto!'}
-          </h3>
-          {!isCorrect && currentQuestion && (
-            <p className='text-white text-lg mb-4'>
-              A resposta era:{' '}
-              <strong className='font-bold'>
-                {currentQuestion.respostaCorreta}
-              </strong>
-            </p>
-          )}
-          <button
-            onClick={spinWheel}
-            className='w-full p-3 bg-white text-gray-800 rounded-lg font-bold
-                       text-lg hover:scale-105 active:scale-100 transition-transform shadow-md'
-          >
-            Questionar Novamente!
-          </button>
-        </div>
-      )
-    }
-
-    if (gameState === 'spinning') {
-      return (
-        <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
-          <svg
-            className='animate-spin h-10 w-10 text-white'
-            xmlns='http://www.w3.org/2000/svg'
-            fill='none'
-            viewBox='0 0 24 24'
-          >
-            <circle
-              className='opacity-25'
-              cx='12'
-              cy='12'
-              r='10'
-              stroke='currentColor'
-              strokeWidth='4'
-            ></circle>
-            <path
-              className='opacity-75'
-              fill='currentColor'
-              d='M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z'
-            ></path>
-          </svg>
-          <h3 className='text-2xl font-bold text-white animate-pulse mt-4'>
-            Gerando questão com IA...
-          </h3>
-        </div>
-      )
-    }
-
-    if (gameState === 'idle') {
-      return (
-        <div className='w-full max-w-lg p-6 text-center h-48 flex items-center justify-center'>
-          <button
-            onClick={spinWheel}
-            disabled={!groqClient}
-            className='w-56 h-56 bg-white text-gray-800 rounded-full
-                       text-3xl font-bold shadow-xl
-                       hover:scale-105 active:scale-95 transition-transform
-                       disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100'
-          >
-            QUESTIONAR!
-          </button>
-        </div>
-      )
-    }
-
-    return null
-  }
-
   return (
-    <div
-      className='flex flex-col items-center justify-between min-h-screen w-full
-                   bg-gradient-to-b from-gray-800 to-gray-900 text-white p-4 font-sans'
-    >
-      <header className='w-full max-w-2xl mb-4'>
-        <h1
-          className='text-4xl font-extrabold text-center mb-4 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-pink-500'
-          style={{ filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.3))' }}
-        >
-          Questionados
-        </h1>
-        {renderScoreboard()}
+    // O "overflow-hidden" no pai impede que a tela inteira role
+    // O "flex flex-col" permite que o cabeçalho e rodapé fiquem fixos se desejado
+    <div className='h-screen w-full bg-gray-900 text-white font-sans flex flex-col overflow-hidden'>
+      {/* HEADER FIXO */}
+      <header className='flex-shrink-0 w-full p-4 sm:p-6 flex flex-col items-center bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 shadow-md z-20'>
+        <div className='flex items-center gap-3'>
+          <FontAwesomeIcon
+            icon={faBrain}
+            className='text-3xl sm:text-4xl text-blue-500'
+          />
+          <h1 className='text-3xl sm:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-pink-500 tracking-tight'>
+            QUESTIONADOS
+          </h1>
+        </div>
+        {gameId && (
+          <div className='mt-2 px-3 py-1 bg-gray-700 rounded-full text-[10px] sm:text-xs font-mono text-gray-300'>
+            SALA: <span className='text-white font-bold'>{gameId}</span>
+          </div>
+        )}
       </header>
 
-      <main className='flex flex-col items-center justify-center flex-grow w-full my-8'>
-        {renderCentralArea()}
+      {/* ÁREA DE CONTEÚDO COM SCROLL INTERNO */}
+      <main className='flex-1 w-full overflow-y-auto overflow-x-hidden relative z-10'>
+        <div className='min-h-full flex flex-col items-center justify-center py-6 px-4'>
+          {/* ERROR TOAST */}
+          {error && (
+            <div className='fixed top-24 z-50 animate-bounce bg-red-500 text-white px-4 py-2 sm:px-6 sm:py-3 rounded-full shadow-xl border-2 border-red-600 font-bold flex items-center gap-3 text-sm sm:text-base'>
+              <FontAwesomeIcon icon={faTimesCircle} />
+              {error}
+              <button
+                onClick={() => setError(null)}
+                className='ml-4 underline text-xs'
+              >
+                Fechar
+              </button>
+            </div>
+          )}
+
+          {/* PLACAR VERSUS */}
+          {gameId && gameData && (
+            <div className='w-full max-w-xl grid grid-cols-[1fr_auto_1fr] items-center gap-2 sm:gap-4 mb-8'>
+              <div
+                className={`p-3 sm:p-4 rounded-2xl border-2 ${
+                  isHost
+                    ? 'bg-blue-600/20 border-blue-500'
+                    : 'bg-gray-800 border-gray-700'
+                } text-center transition-all`}
+              >
+                <div className='text-xs sm:text-sm text-gray-400 uppercase font-bold mb-1 truncate'>
+                  {gameData.player1Name}
+                </div>
+                <div className='text-2xl sm:text-4xl font-black text-white'>
+                  {gameData.player1Score}
+                </div>
+              </div>
+
+              <div className='text-xl sm:text-2xl font-black text-gray-600 italic'>
+                VS
+              </div>
+
+              <div
+                className={`p-3 sm:p-4 rounded-2xl border-2 ${
+                  !isHost && gameData.player2Name
+                    ? 'bg-red-600/20 border-red-500'
+                    : 'bg-gray-800 border-gray-700'
+                } text-center transition-all`}
+              >
+                <div className='text-xs sm:text-sm text-gray-400 uppercase font-bold mb-1 truncate'>
+                  {gameData.player2Name || '...'}
+                </div>
+                <div className='text-2xl sm:text-4xl font-black text-white'>
+                  {gameData.player2Score}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MENU */}
+          {localGameState === 'versus-menu' && (
+            <div className='w-full max-w-md bg-gray-800 p-6 sm:p-8 rounded-3xl shadow-2xl border border-gray-700 text-center'>
+              <h2 className='text-xl sm:text-2xl font-bold mb-6 text-blue-400'>
+                Modo Versus
+              </h2>
+
+              <div className='space-y-4'>
+                <input
+                  className='w-full bg-gray-900/50 border border-gray-600 p-3 sm:p-4 rounded-xl text-white focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50 outline-none transition-all text-center font-bold text-base sm:text-lg'
+                  placeholder='Seu Apelido'
+                  value={playerName}
+                  onChange={e => setPlayerName(e.target.value)}
+                />
+
+                <button
+                  onClick={createGame}
+                  className='w-full py-3 sm:py-4 bg-gradient-to-r from-blue-600 to-blue-500 rounded-xl font-bold text-base sm:text-lg shadow-lg hover:scale-[1.02] transition-transform'
+                >
+                  Criar Nova Sala
+                </button>
+
+                <div className='relative py-2'>
+                  <div className='absolute inset-0 flex items-center'>
+                    <div className='w-full border-t border-gray-700'></div>
+                  </div>
+                  <div className='relative flex justify-center'>
+                    <span className='bg-gray-800 px-4 text-xs sm:text-sm text-gray-500'>
+                      OU ENTRE EM UMA
+                    </span>
+                  </div>
+                </div>
+
+                <div className='flex gap-2'>
+                  <input
+                    className='flex-1 bg-gray-900/50 border border-gray-600 p-3 sm:p-4 rounded-xl text-white text-center uppercase font-mono text-base sm:text-lg tracking-widest outline-none focus:border-green-500'
+                    placeholder='CÓDIGO'
+                    maxLength={6}
+                    value={gameId}
+                    onChange={e => setGameId(e.target.value.toUpperCase())}
+                  />
+                  <button
+                    onClick={joinGame}
+                    className='px-4 sm:px-6 bg-green-600 rounded-xl font-bold hover:bg-green-500 transition-colors text-sm sm:text-base'
+                  >
+                    Entrar
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setLocalGameState('idle')}
+                  className='text-xs sm:text-sm text-gray-500 hover:text-white mt-4 underline'
+                >
+                  Jogar Modo Solo (Offline)
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* WAITING */}
+          {localGameState === 'waiting' && (
+            <div className='text-center w-full max-w-md animate-fade-in'>
+              <div className='inline-block p-4 sm:p-6 bg-gray-800 rounded-full mb-6 animate-pulse'>
+                <FontAwesomeIcon
+                  icon={faUserGroup}
+                  className='text-3xl sm:text-5xl text-blue-400'
+                />
+              </div>
+              <h2 className='text-2xl sm:text-3xl font-bold mb-2'>
+                Aguardando Jogadores
+              </h2>
+              <p className='text-gray-400 mb-6 text-sm sm:text-base'>
+                Compartilhe o código:
+              </p>
+
+              <div className='bg-gray-800 border-2 border-dashed border-gray-600 rounded-xl p-4 sm:p-6 mb-8 inline-block w-full'>
+                <span
+                  className='text-3xl sm:text-4xl font-mono font-black tracking-[0.2em] text-white select-all cursor-pointer block'
+                  onClick={() => navigator.clipboard.writeText(gameId)}
+                >
+                  {gameId}
+                </span>
+              </div>
+
+              {isHost && gameData?.player2Name && (
+                <button
+                  onClick={startRound}
+                  className='block w-full bg-green-500 hover:bg-green-400 text-white py-3 sm:py-4 rounded-xl font-black text-lg sm:text-xl shadow-lg hover:-translate-y-1 transition-all animate-bounce'
+                >
+                  COMEÇAR PARTIDA
+                </button>
+              )}
+
+              {!isHost && (
+                <p className='text-yellow-500 font-medium animate-pulse text-sm sm:text-base'>
+                  {gameData?.player2Name
+                    ? 'Aguardando o Host iniciar...'
+                    : 'Entrando na sala...'}
+                </p>
+              )}
+
+              <button
+                onClick={resetGame}
+                className='mt-8 sm:mt-12 text-gray-500 hover:text-red-400 text-sm'
+              >
+                Cancelar
+              </button>
+            </div>
+          )}
+
+          {/* SPINNING */}
+          {localGameState === 'spinning' && (
+            <div className='w-full flex flex-col items-center'>
+              <div className='grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mb-8 sm:mb-10 w-full max-w-lg'>
+                {categories.map((cat, i) =>
+                  renderCategoryCard(cat, spinningIndex === i)
+                )}
+              </div>
+
+              <div className='bg-gray-800 px-6 py-4 sm:px-8 sm:py-6 rounded-2xl border border-gray-700 shadow-2xl text-center max-w-lg animate-pulse w-full'>
+                <h3 className='text-lg sm:text-xl font-bold text-white mb-2'>
+                  Sorteando Categoria...
+                </h3>
+                <p className='text-blue-400 font-medium text-sm sm:text-base'>
+                  A Inteligência Artificial está criando um desafio exclusivo
+                  para você...
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* QUESTION */}
+          {localGameState === 'question' && localQuestion && (
+            <div className='w-full max-w-2xl animate-slide-up'>
+              <div className='flex justify-center -mb-5 sm:-mb-6 relative z-10'>
+                <div
+                  className={`${
+                    categories.find(
+                      c => c.id === (gameData?.selectedCategory || 'art')
+                    )?.color || 'bg-gray-500'
+                  } px-6 py-2 sm:px-8 sm:py-3 rounded-full shadow-lg flex items-center gap-2 sm:gap-3`}
+                >
+                  <FontAwesomeIcon
+                    icon={
+                      categories.find(
+                        c => c.id === (gameData?.selectedCategory || 'art')
+                      )?.icon
+                    }
+                    className='text-sm sm:text-base'
+                  />
+                  <span className='font-black uppercase tracking-wider text-xs sm:text-sm'>
+                    {
+                      categories.find(
+                        c => c.id === (gameData?.selectedCategory || 'art')
+                      )?.name
+                    }
+                  </span>
+                </div>
+              </div>
+
+              <div className='bg-gray-800 pt-8 pb-6 px-4 sm:pt-10 sm:pb-8 sm:px-8 rounded-3xl shadow-2xl border border-gray-700'>
+                <h3 className='text-lg sm:text-2xl font-bold text-center mb-6 sm:mb-8 leading-relaxed text-gray-100'>
+                  {localQuestion.pergunta}
+                </h3>
+
+                <div className='grid grid-cols-1 gap-3'>
+                  {localQuestion.alternativas.map((alt, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleAnswer(alt)}
+                      className='group relative overflow-hidden bg-gray-700 hover:bg-blue-600 border border-gray-600 hover:border-blue-400 p-4 sm:p-5 rounded-xl text-left transition-all duration-200'
+                    >
+                      <span className='relative z-10 font-medium text-base sm:text-lg group-hover:text-white'>
+                        {alt}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* RESULT */}
+          {localGameState === 'result' && (
+            <div className='text-center animate-scale-in w-full max-w-lg px-2 sm:px-4'>
+              <div className='mb-4 sm:mb-6'>
+                {localResult === 'correct' ? (
+                  <FontAwesomeIcon
+                    icon={faCheckCircle}
+                    className='text-6xl sm:text-8xl text-green-500 drop-shadow-[0_0_15px_rgba(34,197,94,0.5)]'
+                  />
+                ) : (
+                  <FontAwesomeIcon
+                    icon={faTimesCircle}
+                    className='text-6xl sm:text-8xl text-red-500 drop-shadow-[0_0_15px_rgba(239,68,68,0.5)]'
+                  />
+                )}
+              </div>
+
+              <h2 className='text-3xl sm:text-4xl font-black mb-2'>
+                {localResult === 'correct' ? 'RESPOSTA CORRETA!' : 'QUE PENA!'}
+              </h2>
+
+              {localResult === 'correct' ? (
+                <p className='text-gray-400 mb-8 text-base sm:text-lg'>
+                  +1 Ponto adicionado
+                </p>
+              ) : (
+                <div className='mb-8 w-full'>
+                  <p className='text-gray-400 mb-4 text-sm sm:text-base'>
+                    Você errou...
+                  </p>
+                  {localQuestion && (
+                    <div className='bg-gray-800/80 border border-green-500/30 p-4 rounded-xl animate-pulse w-full'>
+                      <div className='flex items-center justify-center gap-2 text-green-400 mb-2'>
+                        <FontAwesomeIcon icon={faLightbulb} />
+                        <span className='text-xs font-bold uppercase tracking-widest'>
+                          A resposta correta era:
+                        </span>
+                      </div>
+                      <p className='text-white font-black text-lg sm:text-xl'>
+                        {localQuestion.respostaCorreta}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {gameId ? (
+                isHost ? (
+                  <button
+                    onClick={startRound}
+                    className='w-full sm:w-auto px-8 py-3 sm:py-4 bg-white text-gray-900 rounded-full font-bold text-lg hover:scale-105 transition-transform shadow-xl'
+                  >
+                    Próxima Rodada{' '}
+                    <FontAwesomeIcon icon={faTrophy} className='ml-2' />
+                  </button>
+                ) : (
+                  <div className='flex flex-col items-center gap-3 bg-gray-800/50 p-4 rounded-xl'>
+                    <div className='w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin'></div>
+                    <p className='text-sm text-gray-400'>
+                      Aguardando o Host iniciar a próxima...
+                    </p>
+                  </div>
+                )
+              ) : (
+                <button
+                  onClick={() => spinWheel(true)}
+                  className='w-full sm:w-auto px-8 py-3 sm:py-4 bg-white text-gray-900 rounded-full font-bold text-lg hover:scale-105 transition-transform shadow-xl'
+                >
+                  Continuar Jogando
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* IDLE SOLO */}
+          {localGameState === 'idle' && !gameId && (
+            <div className='flex flex-col items-center w-full'>
+              <div className='grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 mb-10 sm:mb-12 w-full max-w-lg'>
+                {categories.map(cat => (
+                  <div
+                    key={cat.id}
+                    className='bg-gray-800/50 p-3 sm:p-4 rounded-xl border border-gray-700 flex flex-col items-center'
+                  >
+                    <FontAwesomeIcon
+                      icon={cat.icon}
+                      className={`${cat.textColor} text-xl sm:text-2xl mb-1 sm:mb-2`}
+                    />
+                    <span className='text-[10px] sm:text-xs text-gray-400 uppercase'>
+                      {cat.name}
+                    </span>
+                    <span className='text-lg sm:text-xl font-bold'>
+                      {soloScores[cat.id]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                onClick={() => spinWheel(true)}
+                className='w-full max-w-xs bg-gradient-to-r from-pink-500 to-orange-500 py-4 sm:py-5 rounded-2xl font-black text-xl sm:text-2xl shadow-2xl hover:scale-105 transition-transform'
+              >
+                GIRAR ROLETA
+              </button>
+
+              <button
+                onClick={() => setLocalGameState('versus-menu')}
+                className='mt-8 text-sm text-gray-500 hover:text-white transition-colors'
+              >
+                Voltar ao Menu Principal
+              </button>
+            </div>
+          )}
+        </div>
       </main>
 
-      <footer className='w-full text-center p-4 text-gray-500 text-sm'>
-        Criado para fins educacionais. Powered by Groq.
+      {/* FOOTER FIXO */}
+      <footer className='flex-shrink-0 w-full py-4 text-center text-gray-600 text-xs sm:text-sm border-t border-gray-800 bg-gray-900 z-20'>
+        <p>Questionados Remake • Powered by Groq AI</p>
       </footer>
+
+      <style>{`
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slide-up { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        @keyframes scale-in { from { transform: scale(0.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .animate-fade-in { animation: fade-in 0.5s ease-out; }
+        .animate-slide-up { animation: slide-up 0.5s ease-out; }
+        .animate-scale-in { animation: scale-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        /* Ocultar scrollbar mas manter funcionalidade */
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
     </div>
   )
 }
-// --- FIM DO CÓDIGO ---
