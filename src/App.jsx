@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import Groq from 'groq-sdk'
 import { db, doc, getDoc, setDoc, onSnapshot, updateDoc } from './firebase'
-import { customAlphabet } from 'nanoid' // MUDANÇA: Usar gerador personalizado
+import { customAlphabet } from 'nanoid'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faPalette,
@@ -15,15 +15,6 @@ import {
 
 // Gerador de IDs limpos (apenas letras e números maiúsculos)
 const nanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
-
-const lastQuestions = {
-  art: [],
-  science: [],
-  sports: [],
-  geography: [],
-  entertainment: [],
-  history: []
-}
 
 const categories = [
   { id: 'art', name: 'Arte', color: 'bg-red-500', icon: faPalette },
@@ -90,73 +81,74 @@ export default function App () {
     }
   }, [])
 
-  // --- SINCRONIZAÇÃO FIREBASE ---
-  // Este useEffect roda sempre que o gameId mudar para conectar na sala certa
+  // --- SINCRONIZAÇÃO FIREBASE (CORRIGIDA) ---
   useEffect(() => {
     if (!gameId) return
 
-    // Limpeza do ID para garantir que não haja espaços
     const cleanGameId = gameId.trim().toUpperCase()
     const gameRef = doc(db, 'games', cleanGameId)
-
-    console.log('Tentando conectar na sala:', cleanGameId)
 
     const unsubscribe = onSnapshot(
       gameRef,
       docSnap => {
         if (docSnap.exists()) {
           const data = docSnap.data()
-          console.log('Dados recebidos do Firebase:', data)
-          setGameData(data) // Salva TUDO que vem do banco
+          setGameData(data)
 
-          // Sincroniza Estados Globais apenas se não estivermos processando localmente
-          if (localGameState !== 'spinning') {
-            // Nova Pergunta
+          // LÓGICA DE PRIORIDADE DE ESTADOS
+
+          // 1. SE TIVER PERGUNTA NOVA -> MOSTRA IMEDIATAMENTE (Ignora se estava girando)
+          if (data.currentQuestion && data.gameState === 'question') {
+            // Verifica se é uma pergunta nova ou se o estado local ainda não atualizou
             if (
-              data.currentQuestion &&
-              data.currentQuestion.pergunta !== localQuestion?.pergunta
+              data.currentQuestion.pergunta !== localQuestion?.pergunta ||
+              localGameState !== 'question'
             ) {
+              // Para animação de giro se estiver rodando
+              if (spinIntervalRef.current)
+                clearInterval(spinIntervalRef.current)
+
               setLocalQuestion(data.currentQuestion)
               setLocalGameState('question')
               setLocalResult(null)
             }
-            // Resultado
-            else if (
-              data.lastResult &&
-              data.gameState === 'idle' &&
-              localGameState !== 'result'
-            ) {
+          }
+          // 2. SE TIVER RESULTADO
+          else if (data.lastResult && data.gameState === 'idle') {
+            if (localGameState !== 'result') {
               setLocalResult(data.lastResult)
               setLocalGameState('result')
             }
-            // Estado Genérico (Waiting -> Idle, etc)
-            else if (
-              data.gameState !== localGameState &&
-              localGameState !== 'question' &&
-              localGameState !== 'result'
-            ) {
-              // Evita sobrescrever o estado se o usuário ainda está digitando nome (versus-menu)
-              if (localGameState !== 'versus-menu') {
-                setLocalGameState(data.gameState)
-              }
+          }
+          // 3. SE ESTIVER GIRANDO (Sync visual para o Guest)
+          else if (data.gameState === 'spinning') {
+            if (localGameState !== 'spinning') {
+              setLocalGameState('spinning')
+              // Se eu sou o Guest, inicio a animação visual aqui também
+              if (!isHost) spinWheel(false)
+            }
+          }
+          // 4. OUTROS ESTADOS (Waiting, etc)
+          else if (data.gameState !== localGameState) {
+            // Evita sair do menu se o jogo foi deletado/resetado estranhamente
+            if (localGameState !== 'versus-menu') {
+              setLocalGameState(data.gameState)
             }
           }
         } else {
-          // Se o documento sumiu e não estamos no menu, reseta
           if (localGameState !== 'versus-menu') {
-            alert('A sala não existe ou foi encerrada.')
+            alert('A sala foi encerrada.')
             resetGame()
           }
         }
       },
       error => {
         console.error('Erro no listener:', error)
-        setError('Erro de conexão com o banco de dados.')
       }
     )
 
     return () => unsubscribe()
-  }, [gameId, localGameState, localQuestion]) // Removi isHost para evitar re-renders desnecessários
+  }, [gameId, localGameState, localQuestion, isHost])
 
   // --- FUNÇÕES DO JOGO ---
 
@@ -164,7 +156,7 @@ export default function App () {
     if (!playerName) return setError('Digite seu nome')
     setError(null)
 
-    const newId = nanoid() // Gera ID limpo
+    const newId = nanoid()
 
     try {
       await setDoc(doc(db, 'games', newId), {
@@ -183,7 +175,7 @@ export default function App () {
       setLocalGameState('waiting')
     } catch (e) {
       console.error(e)
-      setError('Erro ao criar sala. Verifique permissões do Firestore.')
+      setError('Erro ao criar sala.')
     }
   }
 
@@ -199,29 +191,19 @@ export default function App () {
 
       if (snap.exists()) {
         const data = snap.data()
-
-        // Verifica se a sala já tem player 2
         if (!data.player2Name) {
-          // TENTA Atualizar o banco PRIMEIRO
           await updateDoc(gameRef, { player2Name: playerName })
-
-          // SÓ MUDAR O ESTADO LOCAL SE O AWAIT FUNCIONAR
           setIsHost(false)
           setLocalGameState('waiting')
-          console.log('Entrou na sala com sucesso!')
         } else {
-          setError('Esta sala já está cheia.')
+          setError('Sala cheia.')
         }
       } else {
-        setError('Sala não encontrada. Verifique o código.')
+        setError('Sala não encontrada.')
       }
     } catch (e) {
-      console.error('Erro no join:', e)
-      // Exibe alerta crítico se falhar ao escrever
-      alert(
-        `Erro ao entrar: ${e.message}. Verifique se as regras do Firestore permitem escrita.`
-      )
-      setError('Falha ao conectar na sala.')
+      console.error(e)
+      setError('Erro ao entrar.')
     }
   }
 
@@ -238,33 +220,42 @@ export default function App () {
 
   const startRound = async () => {
     if (!isHost) return
-    // Limpa resultados anteriores e muda estado
+    // O Host dispara o estado 'spinning' no banco
     await updateDoc(doc(db, 'games', gameId), {
       gameState: 'spinning',
       lastResult: null
     })
-    spinWheel()
+    // E roda a lógica local
+    spinWheel(true)
   }
 
-  const spinWheel = async () => {
+  // shouldGenerate: apenas o Host (ou solo) deve gerar a pergunta ao final
+  const spinWheel = async (shouldGenerate = true) => {
     setLocalGameState('spinning')
     setLocalResult(null)
     setLocalQuestion(null)
 
     let currentSpin = 0
+    // Garante que não há intervalos duplicados
+    if (spinIntervalRef.current) clearInterval(spinIntervalRef.current)
+
     spinIntervalRef.current = setInterval(() => {
       setSpinningIndex(currentSpin % categories.length)
       currentSpin++
     }, 100)
 
+    // Para após 3 segundos
     setTimeout(async () => {
       clearInterval(spinIntervalRef.current)
       const finalIndex = Math.floor(Math.random() * categories.length)
       const category = categories[finalIndex]
       setSpinningIndex(finalIndex)
 
-      if (!gameId || isHost) {
-        await generateQuestion(category)
+      // Apenas quem tem autoridade gera a pergunta
+      if (shouldGenerate) {
+        if (!gameId || isHost) {
+          await generateQuestion(category)
+        }
       }
     }, 3000)
   }
@@ -284,18 +275,21 @@ export default function App () {
       const content = JSON.parse(completion.choices[0]?.message?.content)
 
       if (gameId) {
+        // Atualiza o banco. O listener do useEffect vai pegar isso e mudar a tela.
         await updateDoc(doc(db, 'games', gameId), {
           currentQuestion: content,
           selectedCategory: category.id,
           gameState: 'question'
         })
       } else {
+        // Modo Solo
         setLocalQuestion(content)
         setLocalGameState('question')
       }
     } catch (e) {
       console.error(e)
       setError('Erro na IA. Tente novamente.')
+      // Se falhar, volta para idle
       if (gameId)
         await updateDoc(doc(db, 'games', gameId), { gameState: 'idle' })
       else setLocalGameState('idle')
@@ -308,7 +302,6 @@ export default function App () {
 
     if (gameId) {
       const myScoreField = isHost ? 'player1Score' : 'player2Score'
-      // Usa valor atual do banco ou 0
       const currentScore = (gameData && gameData[myScoreField]) || 0
 
       try {
@@ -338,7 +331,6 @@ export default function App () {
   // --- RENDERERS ---
 
   const renderScoreboard = () => {
-    // Só renderiza placar online se tiver dados
     if (gameId && gameData) {
       return (
         <div className='w-full max-w-lg bg-gray-800 p-4 rounded-xl shadow-lg mb-8 border border-gray-700'>
@@ -540,19 +532,17 @@ export default function App () {
                         (categories[spinningIndex]
                           ? categories[spinningIndex].id
                           : 'art'))
-                  )?.color
+                  )?.color || 'bg-gray-600'
                 }`}
               >
-                {
-                  categories.find(
-                    c =>
-                      c.id ===
-                      (gameData?.selectedCategory ||
-                        (categories[spinningIndex]
-                          ? categories[spinningIndex].id
-                          : 'art'))
-                  )?.name
-                }
+                {categories.find(
+                  c =>
+                    c.id ===
+                    (gameData?.selectedCategory ||
+                      (categories[spinningIndex]
+                        ? categories[spinningIndex].id
+                        : 'art'))
+                )?.name || 'Geral'}
               </span>
             </div>
             <h3 className='text-xl font-bold text-center mb-8 leading-snug'>
@@ -608,7 +598,7 @@ export default function App () {
               </div>
             ) : (
               <button
-                onClick={spinWheel}
+                onClick={() => spinWheel(true)}
                 className='mt-6 bg-white text-gray-900 px-8 py-3 rounded-full font-bold hover:scale-105 transition-transform'
               >
                 Continuar
@@ -621,7 +611,7 @@ export default function App () {
         {localGameState === 'idle' && !gameId && (
           <div className='flex flex-col gap-4 items-center'>
             <button
-              onClick={spinWheel}
+              onClick={() => spinWheel(true)}
               className='w-full max-w-xs bg-white text-gray-900 py-4 rounded-2xl font-black text-xl shadow-xl hover:scale-105 transition-transform flex items-center justify-center gap-2'
             >
               JOGAR SOLO
