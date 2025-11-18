@@ -325,7 +325,9 @@ export default function App () {
         setLocalResult('correct')
         setSoloScores(prev => ({
           ...prev,
-          [categories[spinningIndex].id]: prev[categories[spinningIndex].id] + 1
+          [localQuestion.categoria || categories[spinningIndex].id]:
+            (prev[localQuestion.categoria || categories[spinningIndex].id] ||
+              0) + 1
         }))
       } else {
         setLocalResult('incorrect')
@@ -672,6 +674,33 @@ export default function App () {
                 </div>
               )}
 
+              {/* GRADE DE PONTUAÇÃO ADICIONADA NO MODO SOLO */}
+              {!gameId && (
+                <div className='grid grid-cols-3 gap-2 sm:gap-3 mb-8 w-full'>
+                  {categories.map(cat => (
+                    <div
+                      key={cat.id}
+                      className={`p-2 sm:p-3 rounded-xl border flex flex-col items-center transition-all ${
+                        localQuestion && localQuestion.categoria === cat.id
+                          ? 'bg-gray-700 border-gray-500 ring-1 ring-gray-400 scale-105 shadow-lg'
+                          : 'bg-gray-800/50 border-gray-700 opacity-80'
+                      }`}
+                    >
+                      <FontAwesomeIcon
+                        icon={cat.icon}
+                        className={`${cat.textColor} text-lg mb-1`}
+                      />
+                      <span className='text-[10px] text-gray-400 uppercase'>
+                        {cat.name}
+                      </span>
+                      <span className='text-base font-bold text-white'>
+                        {soloScores[cat.id]}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {gameId ? (
                 isHost ? (
                   <button
@@ -743,7 +772,7 @@ export default function App () {
 
       {/* FOOTER FIXO */}
       <footer className='flex-shrink-0 w-full py-4 text-center text-gray-600 text-xs sm:text-sm border-t border-gray-800 bg-gray-900 z-20'>
-        <p>Questionados Remake • Powered by Groq AI</p>
+        <p>Criado para propósitos educacionais • Powered by Groq AI</p>
       </footer>
 
       <style>{`
