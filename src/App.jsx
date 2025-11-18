@@ -165,7 +165,7 @@ export default function App () {
       2. Nível Fácil/Médio para famílias.
       3. 4 alternativas curtas.
       4. "respostaCorreta" deve ser idêntica a uma das alternativas.
-      5. Evite repetir estas perguntas: ${lastQuestions.slice(-10).join(', ')}.
+      5. Evite repetir estas perguntas ou criar perguntas similares: ${lastQuestions.slice(-10).join(', ')}.
       6. Idioma: Português do Brasil.
     `.trim()
 
