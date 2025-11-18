@@ -69,6 +69,7 @@ const categories = [
 ]
 
 export default function App () {
+  // --- ESTADOS (HOOKS) DEVEM FICAR AQUI DENTRO ---
   const [playerName, setPlayerName] = useState('')
   const [gameId, setGameId] = useState('')
   const [isHost, setIsHost] = useState(false)
@@ -88,6 +89,16 @@ export default function App () {
     geography: 0,
     entertainment: 0,
     history: 0
+  })
+
+  // Novo estado para o histórico de perguntas (para evitar repetição)
+  const [questionHistory, setQuestionHistory] = useState({
+    art: [],
+    science: [],
+    sports: [],
+    geography: [],
+    entertainment: [],
+    history: []
   })
 
   const spinIntervalRef = useRef(null)
@@ -228,6 +239,15 @@ export default function App () {
     setLocalQuestion(null)
     setLocalResult(null)
     setError(null)
+    // Limpa histórico ao resetar
+    setQuestionHistory({
+      art: [],
+      science: [],
+      sports: [],
+      geography: [],
+      entertainment: [],
+      history: []
+    })
   }
 
   const startRound = async () => {
@@ -269,7 +289,19 @@ export default function App () {
   const generateQuestion = async category => {
     if (!groqClient) return
 
+    // Pega o histórico desta categoria
+    const previousQuestions = questionHistory[category.id] || []
+
+    // Se houver histórico, pede para não repetir
+    const avoidContext =
+      previousQuestions.length > 0
+        ? `IMPORTANTE: NÃO repita nenhuma destas perguntas já feitas: [${previousQuestions.join(
+            '; '
+          )}].`
+        : ''
+
     const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a categoria: ${category.name}.
+    ${avoidContext}
     Responda APENAS um JSON neste formato exato, sem markdown: 
     {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta", "categoria": "${category.id}"}.
     Idioma: Português do Brasil.
@@ -284,6 +316,12 @@ export default function App () {
       })
 
       const content = JSON.parse(completion.choices[0]?.message?.content)
+
+      // Salva a pergunta no histórico local para não repetir
+      setQuestionHistory(prev => ({
+        ...prev,
+        [category.id]: [...prev[category.id], content.pergunta]
+      }))
 
       if (gameId) {
         await updateDoc(doc(db, 'games', gameId), {
@@ -325,9 +363,7 @@ export default function App () {
         setLocalResult('correct')
         setSoloScores(prev => ({
           ...prev,
-          [localQuestion.categoria || categories[spinningIndex].id]:
-            (prev[localQuestion.categoria || categories[spinningIndex].id] ||
-              0) + 1
+          [categories[spinningIndex].id]: prev[categories[spinningIndex].id] + 1
         }))
       } else {
         setLocalResult('incorrect')
@@ -369,8 +405,6 @@ export default function App () {
   )
 
   return (
-    // O "overflow-hidden" no pai impede que a tela inteira role
-    // O "flex flex-col" permite que o cabeçalho e rodapé fiquem fixos se desejado
     <div className='h-screen w-full bg-gray-900 text-white font-sans flex flex-col overflow-hidden'>
       {/* HEADER FIXO */}
       <header className='flex-shrink-0 w-full p-4 sm:p-6 flex flex-col items-center bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 shadow-md z-20'>
@@ -772,7 +806,7 @@ export default function App () {
 
       {/* FOOTER FIXO */}
       <footer className='flex-shrink-0 w-full py-4 text-center text-gray-600 text-xs sm:text-sm border-t border-gray-800 bg-gray-900 z-20'>
-        <p>Criado para propósitos educacionais • Powered by Groq AI</p>
+        <p>Questionados Remake • Powered by Groq AI</p>
       </footer>
 
       <style>{`
