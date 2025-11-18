@@ -3,7 +3,7 @@ import Groq from 'groq-sdk'
 
 // MUDANÇA 1: Importar Firebase
 import { db, doc, getDoc, setDoc, onSnapshot, updateDoc } from './firebase'
-import { nanoid } from 'nanoid' // Para gerar IDs de jogos únicos
+import { nanoid } from 'nanoid'
 
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
@@ -13,12 +13,12 @@ import {
   faGlobe,
   faTicket,
   faLandmark,
-  faUser, // Novo ícone para jogador
-  faUserGroup // Novo ícone para multiplayer
+  faUser,
+  faUserGroup
 } from '@fortawesome/free-solid-svg-icons'
 
 // --- Configuração das Categorias ---
-// MUDANÇA 2: lastQuestions como objeto de histórico por categoria
+// lastQuestions como objeto de histórico por categoria
 const lastQuestions = {
   art: [],
   science: [],
@@ -177,13 +177,16 @@ export default function App () {
         }
       } else {
         // Se o documento não existe, a sessão foi terminada
-        alert('A sessão do jogo terminou ou não foi encontrada.')
-        resetGame()
+        // Apenas para convidados/jogadores que não são o host
+        if (!isHost && gameId) {
+          alert('A sessão do jogo terminou ou não foi encontrada.')
+          resetGame()
+        }
       }
     })
 
     return () => unsubscribe()
-  }, [gameId])
+  }, [gameId, isHost, currentQuestion])
 
   // 4.2. Criar uma nova sala (Host)
   const createGame = async () => {
@@ -192,6 +195,10 @@ export default function App () {
       return
     }
 
+    // Limpar o erro antes de tentar
+    setError(null)
+
+    // Gera um ID de sala com 6 caracteres maiúsculos
     const newGameId = nanoid(6).toUpperCase()
     const gameRef = doc(db, 'games', newGameId)
 
@@ -206,15 +213,22 @@ export default function App () {
     }
 
     try {
+      // Tenta criar o documento no Firestore
       await setDoc(gameRef, initialGameData)
+
+      // Se for bem sucedido, atualiza o estado local
       setGameId(newGameId)
       setIsHost(true)
       setIsPlayerOne(true)
       setGameState('waiting')
-      setError(null)
+
+      console.log('Sala criada com sucesso:', newGameId)
     } catch (e) {
       console.error('Erro ao criar sala:', e)
-      setError('Falha ao criar sala. Tente novamente.')
+      // Exibe a mensagem de erro de permissão
+      setError(
+        `Falha ao criar sala. Firebase Erro: ${e.message}. Verifique as Regras do Firestore.`
+      )
     }
   }
 
@@ -226,6 +240,8 @@ export default function App () {
     }
 
     const gameRef = doc(db, 'games', gameId)
+
+    setError(null)
 
     try {
       const docSnap = await getDoc(gameRef)
@@ -240,8 +256,7 @@ export default function App () {
         setIsHost(false)
         setIsPlayerOne(false)
         setGameState('idle')
-        setError(null)
-        setOpponentName(docSnap.data().player1Name) // Pega o nome do Host
+        setOpponentName(docSnap.data().player1Name)
       } else if (docSnap.exists() && docSnap.data().player2Name) {
         setError('Sala cheia ou jogo em andamento.')
       } else {
@@ -249,12 +264,18 @@ export default function App () {
       }
     } catch (e) {
       console.error('Erro ao entrar na sala:', e)
-      setError('Falha ao entrar na sala. Tente novamente.')
+      setError(`Falha ao entrar na sala. Tente novamente. Erro: ${e.message}`)
     }
   }
 
   // 4.4. Resetar (Limpar estados)
   const resetGame = () => {
+    // Se for o host, tenta apagar a sala no Firebase (melhoria futura)
+    if (isHost && gameId) {
+      // Adicione aqui a lógica para apagar o documento do jogo (opcional)
+      // deleteDoc(doc(db, 'games', gameId)).catch(console.error);
+    }
+
     setScores({
       art: 0,
       science: 0,
@@ -287,10 +308,6 @@ export default function App () {
       return
     }
 
-    // ... (O restante da lógica de animação da roleta permanece igual,
-    // mas a chamada final para fetchQuestion é adaptada para multiplayer) ...
-
-    // ... (Mantendo a lógica anterior do spin)
     if (!groqClient) {
       setError('A chave da API Groq não está configurada.')
       return
@@ -320,27 +337,34 @@ export default function App () {
       setSelectedCategory(finalCategory)
       setSpinningIndex(finalCategoryIndex)
 
-      // MUDANÇA: Chama a função que distribui a pergunta
       fetchQuestionAndDistribute(finalCategory.name)
     }, spinDuration)
   }
 
-  // --- MUDANÇA 3: DISTRIBUIÇÃO DA PERGUNTA PARA O FIREBASE ---
+  // --- DISTRIBUIÇÃO DA PERGUNTA PARA O FIREBASE ---
   const fetchQuestionAndDistribute = async categoryName => {
-    // Lógica para obter a pergunta (MANTIDA IGUAL DA ÚLTIMA RESPOSTA)
     const currentCategoryObj = categories.find(c => c.name === categoryName)
     const categoryId = currentCategoryObj ? currentCategoryObj.id : 'art'
     const categoryHistory = lastQuestions[categoryId] || []
 
     const systemPrompt = `
       **Seu Papel:** Você é um assistente de IA para um jogo de trivia chamado 'Questionados'.
-      // ... (restante do systemPrompt) ...
+      **Formato de Saída:** Você DEVE responder APENAS com um JSON válido. Não escreva nada antes ou depois do JSON.
+      **Estrutura do JSON:**
+      {
+        "pergunta": "Texto da pergunta",
+        "alternativas": ["Opção 1", "Opção 2", "Opção 3", "Opção 4"],
+        "respostaCorreta": "Texto exato de uma das opções"
+      }
       **Regras:**
-      // ... (restante das regras) ...
+      1. A pergunta deve ser sobre: ${categoryName}.
+      2. Nível Fácil/Médio para famílias.
+      3. 4 alternativas curtas.
+      4. "respostaCorreta" deve ser idêntica a uma das alternativas.
       5. Evite repetir estas perguntas ou criar perguntas similares: ${categoryHistory.join(
         ', '
       )}.
-      // ...
+      6. Idioma: Português do Brasil.
     `.trim()
 
     const MAX_RETRIES = 3
@@ -350,9 +374,10 @@ export default function App () {
         const completion = await groqClient.chat.completions.create({
           messages: [
             { role: 'system', content: systemPrompt },
+            // CORREÇÃO: Adiciona a palavra JSON na mensagem do usuário para satisfazer a API
             {
               role: 'user',
-              content: `Gera uma pergunta sobre ${categoryName}.`
+              content: `Gera uma pergunta sobre ${categoryName}. Retorne o resultado em formato JSON.`
             }
           ],
           model: 'llama-3.3-70b-versatile',
@@ -384,7 +409,6 @@ export default function App () {
 
         // PASSO DE DISTRIBUIÇÃO
         if (gameId) {
-          // Se estivermos em modo versus, distribuímos via Firebase
           const gameRef = doc(db, 'games', gameId)
           await updateDoc(gameRef, {
             currentQuestion: parsedQuestion,
@@ -392,14 +416,12 @@ export default function App () {
             gameState: 'question',
             lastResult: null // Limpa o resultado anterior
           })
-          // O estado local será atualizado pelo `onSnapshot`
         } else {
-          // Se for modo solo, atualiza o estado local
           setCurrentQuestion(parsedQuestion)
           setGameState('question')
         }
 
-        return // Sucesso
+        return
       } catch (err) {
         console.warn(`Tentativa ${i + 1} falhou:`, err)
 
@@ -421,24 +443,30 @@ export default function App () {
     const categoryId = selectedCategory.id
 
     if (gameId) {
-      // MODO VERSUS: Apenas atualiza a pontuação no Firebase
+      // MODO VERSUS
       const playerKey = isPlayerOne ? 'player1Score' : 'player2Score'
-      const opponentKey = isPlayerOne ? 'player2Score' : 'player1Score'
       const newScore = isPlayerOne
         ? playerScores.player1 + (isCorrect ? 1 : 0)
         : playerScores.player2 + (isCorrect ? 1 : 0)
 
       const gameRef = doc(db, 'games', gameId)
 
-      // O jogador atualiza sua pontuação imediatamente
-      await updateDoc(gameRef, {
-        [playerKey]: newScore,
-        lastResult: isCorrect ? 'correct' : 'incorrect'
-      })
-
-      // O estado local será atualizado pelo `onSnapshot`
+      try {
+        await updateDoc(gameRef, {
+          [playerKey]: newScore,
+          // Envia o resultado da resposta do jogador atual para o outro player sincronizar
+          lastResult: isCorrect ? 'correct' : 'incorrect',
+          // Volta para o estado idle, esperando o Host girar a roleta novamente.
+          gameState: 'idle'
+        })
+      } catch (e) {
+        console.error('Erro ao atualizar score no Firebase:', e)
+        setError(
+          `Erro ao registrar resposta. Verifique as permissões do Firebase.`
+        )
+      }
     } else {
-      // MODO SOLO: Mantido como estava
+      // MODO SOLO
       if (isCorrect) {
         setResult('correct')
         setScores(prevScores => ({
@@ -456,7 +484,6 @@ export default function App () {
 
   // 5.1. Renderiza o Placar (Adaptado para Versão Solo e Versus)
   const renderScoreboard = () => {
-    // Se estiver em modo Versus e conectado, mostra o placar Versus
     if (gameId && opponentName) {
       const currentPlayerScore = isPlayerOne
         ? playerScores.player1
@@ -465,7 +492,6 @@ export default function App () {
         ? playerScores.player2
         : playerScores.player1
       const currentPlayerName = playerName
-      const isMyTurn = isHost ? gameState === 'idle' : gameState === 'waiting'
 
       return (
         <div className='w-full max-w-lg mx-auto bg-gray-700 p-4 rounded-lg shadow-xl'>
@@ -514,7 +540,6 @@ export default function App () {
       )
     }
 
-    // Se estiver em modo Solo (Single Player)
     return (
       <div className='grid grid-cols-3 sm:grid-cols-6 gap-2 p-2 rounded-lg bg-gray-900/50 shadow-inner'>
         {categories.map((category, index) => {
@@ -651,14 +676,16 @@ export default function App () {
     let bgClass = 'bg-gray-600/90'
 
     if (lastSyncedResult) {
-      if (lastSyncedResult === 'correct') {
-        message = 'Você Acertou!'
+      const myResult = lastSyncedResult
+
+      if (myResult === 'correct') {
+        message = 'Sua Resposta: CORRETA! (+1)'
         bgClass = 'bg-green-600/90'
-      } else if (lastSyncedResult === 'incorrect') {
-        message = 'Você Errou!'
+      } else if (myResult === 'incorrect') {
+        message = 'Sua Resposta: INCORRETA!'
         bgClass = 'bg-red-700/90'
       } else {
-        message = lastSyncedResult // Exibe o resultado do oponente se for um nome
+        message = lastSyncedResult
       }
     } else {
       message = 'Aguardando o Host para a próxima rodada...'
@@ -698,7 +725,6 @@ export default function App () {
   // 5.5. Renderiza a Área Central
   const renderCentralArea = () => {
     if (error) {
-      // ... (código de erro mantido) ...
       return (
         <div className='w-full max-w-lg p-6 bg-red-800/80 rounded-lg shadow-lg text-center h-auto flex flex-col justify-center'>
           <h3 className='text-xl font-bold text-white mb-2'>Erro</h3>
@@ -726,7 +752,6 @@ export default function App () {
     }
 
     if (gameState === 'question' && currentQuestion) {
-      // ... (código de pergunta mantido) ...
       return (
         <div className='w-full max-w-lg p-6 bg-gray-800/80 backdrop-blur-sm rounded-lg shadow-lg'>
           <h3 className='text-xl font-bold text-white mb-4 text-center'>
@@ -754,7 +779,6 @@ export default function App () {
       }
 
       const isCorrect = result === 'correct'
-      // ... (código de resultado solo mantido) ...
       return (
         <div
           className={`w-full max-w-lg p-6 ${
@@ -784,7 +808,6 @@ export default function App () {
     }
 
     if (gameState === 'spinning') {
-      // ... (código de spinning mantido) ...
       return (
         <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
           <svg
@@ -817,7 +840,6 @@ export default function App () {
     if (gameState === 'idle') {
       return (
         <div className='w-full max-w-lg p-6 text-center h-48 flex flex-col items-center justify-center'>
-          {/* Se estiver no modo versus (offline, mas conectado a uma sala) */}
           {gameId ? (
             <button
               onClick={spinWheel}
