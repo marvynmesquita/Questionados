@@ -806,7 +806,7 @@ export default function App () {
 
       {/* FOOTER FIXO */}
       <footer className='flex-shrink-0 w-full py-4 text-center text-gray-600 text-xs sm:text-sm border-t border-gray-800 bg-gray-900 z-20'>
-        <p>Questionados Remake • Powered by Groq AI</p>
+        <p>Criado com propósito educacional • Powered by Groq AI</p>
       </footer>
 
       <style>{`
