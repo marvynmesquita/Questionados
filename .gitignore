@@ -175,4 +175,7 @@ sketch
 .history
 .ionide
 
+#build output
+build/
+
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,dotenv,react,node
