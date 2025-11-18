@@ -1,18 +1,15 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import './index.css'
+import App from './App'
+import * as serviceWorkerRegistration from './serviceWorkerRegistration' // IMPORTAR ISTO
 
-// Importa o CSS principal que carrega o Tailwind
-import './index.css';
-
-// Importa o seu componente principal
-import App from './App';
-
-// Pega a 'div' com id 'root' do public/index.html
-const root = ReactDOM.createRoot(document.getElementById('root'));
-
-// Renderiza o seu App dentro dela
+const root = ReactDOM.createRoot(document.getElementById('root'))
 root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
-);
+)
+
+// Alterar de unregister() para register() para ativar o PWA
+serviceWorkerRegistration.register()
