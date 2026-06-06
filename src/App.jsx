@@ -6,12 +6,14 @@ import { customAlphabet } from 'nanoid'
 // Ícones
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPalette,
-  faFlask,
-  faFutbol,
-  faGlobe,
-  faTicket,
-  faLandmark,
+  faRobot,
+  faLanguage,
+  faKeyboard,
+  faGuitar,
+  faPersonDress,
+  faHeadphones,
+  faUserNinja,
+  faDumbbell,
   faUserGroup,
   faBrain,
   faTrophy,
@@ -25,46 +27,60 @@ const nanoid = customAlphabet('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', 6)
 // Categorias
 const categories = [
   {
-    id: 'art',
-    name: 'Arte',
-    color: 'bg-red-500',
-    textColor: 'text-red-500',
-    icon: faPalette
-  },
-  {
-    id: 'science',
-    name: 'Ciência',
-    color: 'bg-green-500',
-    textColor: 'text-green-500',
-    icon: faFlask
-  },
-  {
-    id: 'sports',
-    name: 'Esporte',
+    id: 'robotica',
+    name: 'Robótica',
     color: 'bg-blue-500',
     textColor: 'text-blue-500',
-    icon: faFutbol
+    icon: faRobot
   },
   {
-    id: 'geography',
-    name: 'Geografia',
-    color: 'bg-yellow-500',
-    textColor: 'text-yellow-600',
-    icon: faGlobe
+    id: 'ingles',
+    name: 'Inglês',
+    color: 'bg-red-500',
+    textColor: 'text-red-500',
+    icon: faLanguage
   },
   {
-    id: 'entertainment',
-    name: 'Entretenim.', // Abreviação para mobile
-    color: 'bg-pink-500',
-    textColor: 'text-pink-500',
-    icon: faTicket
-  },
-  {
-    id: 'history',
-    name: 'História',
+    id: 'teclado',
+    name: 'Teclado',
     color: 'bg-purple-500',
     textColor: 'text-purple-500',
-    icon: faLandmark
+    icon: faKeyboard
+  },
+  {
+    id: 'violao',
+    name: 'Violão',
+    color: 'bg-yellow-500',
+    textColor: 'text-yellow-600',
+    icon: faGuitar
+  },
+  {
+    id: 'bale',
+    name: 'Balé',
+    color: 'bg-pink-400',
+    textColor: 'text-pink-400',
+    icon: faPersonDress
+  },
+  {
+    id: 'hiphop',
+    name: 'Dança Hip-Hop',
+    color: 'bg-orange-500',
+    textColor: 'text-orange-500',
+    icon: faHeadphones
+  },
+  {
+    id: 'carate',
+    name: 'Caratê',
+    color: 'bg-gray-100',
+    textColor: 'text-gray-100',
+    icon: faUserNinja
+  },
+  {
+    id: 'jiujitsu',
+    name: 'Jiu-Jitsu',
+    color: 'bg-green-600',
+    textColor: 'text-green-600',
+    icon: faDumbbell
   }
 ]
 
@@ -83,22 +99,26 @@ export default function App () {
   const [localResult, setLocalResult] = useState(null)
 
   const [soloScores, setSoloScores] = useState({
-    art: 0,
-    science: 0,
-    sports: 0,
-    geography: 0,
-    entertainment: 0,
-    history: 0
+    robotica: 0,
+    ingles: 0,
+    teclado: 0,
+    violao: 0,
+    bale: 0,
+    hiphop: 0,
+    carate: 0,
+    jiujitsu: 0
   })
 
   // Novo estado para o histórico de perguntas (para evitar repetição)
   const [questionHistory, setQuestionHistory] = useState({
-    art: [],
-    science: [],
-    sports: [],
-    geography: [],
-    entertainment: [],
-    history: []
+    robotica: [],
+    ingles: [],
+    teclado: [],
+    violao: [],
+    bale: [],
+    hiphop: [],
+    carate: [],
+    jiujitsu: []
   })
 
   const spinIntervalRef = useRef(null)
@@ -241,12 +261,14 @@ export default function App () {
     setError(null)
     // Limpa histórico ao resetar
     setQuestionHistory({
-      art: [],
-      science: [],
-      sports: [],
-      geography: [],
-      entertainment: [],
-      history: []
+      robotica: [],
+      ingles: [],
+      teclado: [],
+      violao: [],
+      bale: [],
+      hiphop: [],
+      carate: [],
+      jiujitsu: []
     })
   }
 
@@ -300,7 +322,8 @@ export default function App () {
           )}].`
         : ''
 
-    const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a categoria: ${category.name}.
+    const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a modalidade extracurricular do Escola Viva: ${category.name}.
+    A pergunta deve ser diretamente relacionada a esta modalidade (${category.name}).
     ${avoidContext}
     Responda APENAS um JSON neste formato exato, sem markdown: 
     {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta", "categoria": "${category.id}"}.
@@ -618,14 +641,14 @@ export default function App () {
                 <div
                   className={`${
                     categories.find(
-                      c => c.id === (localQuestion.categoria || 'art')
+                      c => c.id === (localQuestion.categoria || 'robotica')
                     )?.color || 'bg-gray-500'
                   } px-6 py-2 sm:px-8 sm:py-3 rounded-full shadow-lg flex items-center gap-2 sm:gap-3`}
                 >
                   <FontAwesomeIcon
                     icon={
                       categories.find(
-                        c => c.id === (localQuestion.categoria || 'art')
+                        c => c.id === (localQuestion.categoria || 'robotica')
                       )?.icon
                     }
                     className='text-sm sm:text-base'
@@ -633,7 +656,7 @@ export default function App () {
                   <span className='font-black uppercase tracking-wider text-xs sm:text-sm'>
                     {
                       categories.find(
-                        c => c.id === (localQuestion.categoria || 'art')
+                        c => c.id === (localQuestion.categoria || 'robotica')
                       )?.name
                     }
                   </span>
