@@ -5,7 +5,8 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
-  updateDoc
+  updateDoc,
+  increment
 } from 'firebase/firestore'
 
 // As variáveis de ambiente devem ser carregadas aqui:
@@ -25,4 +26,4 @@ const app = initializeApp(firebaseConfig)
 const db = getFirestore(app)
 
 // Exporta as funções do Firestore para usar no App.jsx
-export { db, doc, getDoc, setDoc, onSnapshot, updateDoc }
+export { db, doc, getDoc, setDoc, onSnapshot, updateDoc, increment }
