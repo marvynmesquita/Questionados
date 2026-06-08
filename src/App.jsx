@@ -342,6 +342,19 @@ export default function App () {
     })
   }
 
+  // Auto-close question if everyone has answered
+  useEffect(() => {
+    if (role === 'teacher' && gameData && gameData.gameState === 'question') {
+      const playersList = Object.values(gameData.players || {})
+      if (playersList.length > 0) {
+        const allAnswered = playersList.every(p => p.answeredCurrent === true)
+        if (allAnswered) {
+          showResults()
+        }
+      }
+    }
+  }, [gameData, role])
+
   // --- RENDERERS ---
 
   const renderCategoryCard = (cat, isSelected = false) => (
