@@ -259,13 +259,27 @@ export default function App () {
         ? `IMPORTANTE: NÃO repita nenhuma destas perguntas já feitas: [${previousQuestions.join('; ')}].`
         : ''
 
-    const prompt = `Atue como um apresentador de Game Show inteligente. Gere uma pergunta de nível médio/difícil sobre a modalidade extracurricular do Escola Viva: ${category.name}.
-    A pergunta deve ser diretamente relacionada a esta modalidade (${category.name}).
+    let basePrompt = '';
+
+    if (category.id === 'robotica') {
+      basePrompt = `Atue como um apresentador de Game Show educacional para alunos de 10 a 15 anos. Gere uma pergunta de nível FÁCIL ou MÉDIO sobre Robótica. 
+      O tema da pergunta DEVE ser obrigatoriamente restrito a um destes assuntos ensinados em aula: 
+      - Programação em blocos (mBlock) e uso do plano cartesiano (X e Y).
+      - Lógica de programação: Condicionais complexas (If-Else) e Loops (repetições).
+      - Eletrônica básica: Montagem de circuitos (LEDs, resistores, botões, bateria) no Tinkercad ou físico.
+      - Componentes mecânicos: Uso de Ponte H para controle de motores DC.
+      - Projetos práticos: Semáforo eletrônico, Jogo da Memória eletrônico, Robô Vagalume ou Código Morse.`;
+    } else {
+      basePrompt = `Atue como um apresentador de Game Show educacional para alunos de 10 a 15 anos. Gere uma pergunta de nível BÁSICO e INICIANTE sobre a modalidade extracurricular: ${category.name}. 
+      A pergunta deve focar exclusivamente em fundamentos introdutórios e ser fácil de responder.`;
+    }
+
+    const prompt = `${basePrompt}
     ${avoidContext}
     Responda APENAS um JSON neste formato exato, sem markdown: 
     {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta", "categoria": "${category.id}"}.
     Idioma: Português do Brasil.
-    Não traduza a categoria.`
+    Não traduza a categoria.`;
 
     try {
       const completion = await groqClient.chat.completions.create({
