@@ -263,12 +263,15 @@ export default function App () {
 
     if (category.id === 'robotica') {
       basePrompt = `Atue como um apresentador de Game Show educacional para alunos de 10 a 15 anos. Gere uma pergunta de nível FÁCIL ou MÉDIO sobre Robótica. 
-      O tema da pergunta DEVE ser obrigatoriamente restrito a um destes assuntos ensinados em aula: 
-      - Programação em blocos (mBlock) e uso do plano cartesiano (X e Y).
-      - Lógica de programação: Condicionais complexas (If-Else) e Loops (repetições).
+      O tema da pergunta DEVE ser obrigatoriamente restrito a um destes assuntos: 
+      - Programação em blocos (mBlock) e plano cartesiano (X e Y).
+      - Lógica de programação: Condicionais complexas (If-Else) e Loops.
       - Eletrônica básica: Montagem de circuitos (LEDs, resistores, botões, bateria) no Tinkercad ou físico.
       - Componentes mecânicos: Uso de Ponte H para controle de motores DC.
       - Projetos práticos: Semáforo eletrônico, Jogo da Memória eletrônico, Robô Vagalume ou Código Morse.`;
+    } else if (category.id === 'teclado') {
+      basePrompt = `Atue como um apresentador de Game Show educacional para alunos de 10 a 15 anos. Gere uma pergunta de nível BÁSICO e INICIANTE sobre o INSTRUMENTO MUSICAL: Teclado/Piano. 
+      ATENÇÃO: NÃO faça perguntas sobre teclado de computador ou informática. Foque em notas musicais, teclas brancas e pretas, acordes básicos ou ritmo.`;
     } else {
       basePrompt = `Atue como um apresentador de Game Show educacional para alunos de 10 a 15 anos. Gere uma pergunta de nível BÁSICO e INICIANTE sobre a modalidade extracurricular: ${category.name}. 
       A pergunta deve focar exclusivamente em fundamentos introdutórios e ser fácil de responder.`;
@@ -276,6 +279,11 @@ export default function App () {
 
     const prompt = `${basePrompt}
     ${avoidContext}
+    INSTRUÇÕES CRÍTICAS DE PRECISÃO:
+    - A "respostaCorreta" DEVE ser um fato indiscutível e verificável.
+    - NÃO invente informações. 
+    - As 3 alternativas incorretas devem ser plausíveis, mas factualmente erradas.
+    
     Responda APENAS um JSON neste formato exato, sem markdown: 
     {"pergunta": "Texto da pergunta", "alternativas": ["Opção A", "Opção B", "Opção C", "Opção D"], "respostaCorreta": "Texto exato da opção correta", "categoria": "${category.id}"}.
     Idioma: Português do Brasil.
@@ -286,7 +294,7 @@ export default function App () {
         messages: [{ role: 'user', content: prompt }],
         model: 'llama-3.3-70b-versatile',
         response_format: { type: 'json_object' },
-        temperature: 0.7
+        temperature: 0.2 // Reduzido de 0.7 para 0.2 para evitar alucinações e focar em fatos.
       })
 
       const content = JSON.parse(completion.choices[0]?.message?.content)
